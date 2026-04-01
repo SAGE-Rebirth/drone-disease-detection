@@ -1,0 +1,40 @@
+# Data
+ml/data/raw/
+ml/data/processed/
+ml/data/augmented/
+ml/models/*.pt
+ml/models/*.onnx
+
+# Model weights
+*.pt
+*.onnx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+drn-env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+.claude/
+
+# Training runs
+runs/
+wandb/
+
+# Environment
+.env
+.env.*

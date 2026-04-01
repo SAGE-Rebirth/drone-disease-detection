@@ -1,0 +1,37 @@
+# Disease Drone — YOLOv8-nano Training Config
+
+model: yolov8n.pt
+data: configs/dataset.yaml
+
+# Training hyperparameters
+epochs: 100
+imgsz: 640
+batch: 16
+patience: 15
+
+# Device: cpu or 0 (for GPU)
+device: cpu
+
+# Output
+project: models
+name: disease_det_v1
+save: true
+plots: true
+
+# Optimizer
+optimizer: AdamW
+lr0: 0.001
+lrf: 0.01
+weight_decay: 0.0005
+
+# Augmentation (Ultralytics built-in)
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+degrees: 15.0
+translate: 0.1
+scale: 0.5
+fliplr: 0.5
+flipud: 0.2
+mosaic: 1.0
+mixup: 0.1

@@ -1,0 +1,15 @@
+# Disease Drone — YOLO Dataset Config
+# Paths are relative to this file's parent directory (ml/)
+
+path: /Volumes/Work/data/projects/disease-drone/ml/data/processed
+train: train/images
+val: val/images
+test: test/images
+
+# Class names (6 classes)
+names:
+  0: healthy
+  1: leaf_blight
+  2: leaf_spot
+  3: rust
+  4: powdery_mildew
