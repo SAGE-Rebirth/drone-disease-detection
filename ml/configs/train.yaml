@@ -9,8 +9,8 @@ imgsz: 640
 batch: 16
 patience: 15
 
-# Device: cpu or 0 (for GPU)
-device: cpu
+# Device: auto (detect best available), mps (Apple Silicon), 0 (CUDA GPU), or cpu
+device: auto
 
 # Output
 project: models

@@ -11,13 +11,34 @@ Usage:
 """
 
 import argparse
+import platform
+import tempfile
 import yaml
 from pathlib import Path
+
+import torch
 from ultralytics import YOLO
 
 # Project root = ml/
 ML_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ML_DIR / "configs" / "train.yaml"
+
+
+def detect_device():
+    """Auto-detect the best available device for training.
+
+    Returns:
+        str: 'mps' on Apple Silicon, 'cuda'/'0' if NVIDIA/AMD GPU available, 'cpu' otherwise.
+    """
+    if platform.system() == "Darwin" and torch.backends.mps.is_available():
+        print("Detected Apple Silicon — using MPS backend")
+        return "mps"
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        print(f"Detected GPU — using CUDA device 0 ({gpu_name})")
+        return "0"
+    print("No GPU detected — falling back to CPU")
+    return "cpu"
 
 
 def load_config(config_path):
@@ -26,23 +47,53 @@ def load_config(config_path):
         return yaml.safe_load(f)
 
 
+def resolve_dataset_path(data_config_path):
+    """Ensure the 'path' field in dataset.yaml is an absolute, platform-correct path.
+
+    If the dataset config uses a relative path, resolve it relative to
+    the config file's own directory so the project is portable across OS.
+    """
+    data_config_path = Path(data_config_path)
+    with open(data_config_path, "r") as f:
+        ds_cfg = yaml.safe_load(f)
+
+    raw_path = ds_cfg.get("path", "")
+    if raw_path and not Path(raw_path).is_absolute():
+        resolved = (data_config_path.parent / raw_path).resolve()
+        ds_cfg["path"] = str(resolved)
+        # Write back a temp copy so YOLO sees the absolute path
+        tmp = Path(tempfile.mkdtemp()) / "dataset.yaml"
+        with open(tmp, "w") as f:
+            yaml.dump(ds_cfg, f, default_flow_style=False)
+        return str(tmp)
+    return str(data_config_path)
+
+
 def train(config):
     """Run YOLO training with the given config."""
     model_name = config.pop("model", "yolov8n.pt")
     data_path = config.get("data", "configs/dataset.yaml")
 
+    # Auto-detect device if set to "auto" or not specified
+    if config.get("device", "auto") == "auto":
+        config["device"] = detect_device()
+
     # Resolve data path relative to ml/ directory
     if not Path(data_path).is_absolute():
-        config["data"] = str(ML_DIR / data_path)
+        data_path = str(ML_DIR / data_path)
+
+    # Resolve dataset.yaml 'path' field to an absolute, cross-platform path
+    config["data"] = resolve_dataset_path(data_path)
 
     # Resolve project path relative to ml/ directory
     project = config.get("project", "models")
     if not Path(project).is_absolute():
         config["project"] = str(ML_DIR / project)
 
+    output_dir = Path(config["project"]) / config.get("name", "train")
     print(f"Loading model: {model_name}")
     print(f"Dataset config: {config['data']}")
-    print(f"Output: {config['project']}/{config.get('name', 'train')}")
+    print(f"Output: {output_dir}")
     print()
 
     model = YOLO(model_name)

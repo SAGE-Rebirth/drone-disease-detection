@@ -1,6 +1,6 @@
 # Disease Drone — Resume Point
 
-**Last session:** 2026-04-01
+**Last session:** 2026-04-03
 
 ---
 
@@ -9,13 +9,13 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Architecture | Done | `architecture.md` — full system design |
-| ML Pipeline | Scripts done, training pending | All code written, data preprocessed, needs GPU to train |
+| ML Pipeline | Scripts done, training pending | All code written, data preprocessed, needs GPU to train. Auto device detection added (MPS/CUDA/CPU). |
 | Dashboard | Done (v1) | FastAPI + Leaflet.js, dark theme, working with demo data |
-| Decision Engine | Not started | DBSCAN clustering, GPS offset calc, spray zone gen |
-| Mission Planner | Not started | Lawnmower waypoints, TSP path optimizer, MAVLink upload |
-| Drone Comms | Not started | pymavlink/dronekit integration |
-| Image Ingestion | Not started | EXIF GPS extraction, feed to inference pipeline |
-| Base Station Server | Not started | Orchestrator tying all components together |
+| Decision Engine | Done | `engine/decision.py` — pixel→GPS, DBSCAN clustering, convex hull spray zones, severity scoring |
+| Mission Planner | Done | `engine/planner.py` — lawnmower waypoints, nearest-neighbour TSP, MAVLink + QGC export |
+| Drone Comms | Done | `drone/comms.py` — pymavlink DroneLink class, mission upload, telemetry, camera/spray control |
+| Image Ingestion | Done | `engine/ingest.py` — EXIF GPS extraction, ML inference hookup, folder watcher |
+| Base Station Server | Done | `engine/base_station.py` — full orchestrator tying all components together |
 
 ---
 
@@ -89,9 +89,66 @@ dashboard/
 
 **Known issues fixed:**
 - `TemplateResponse` API — uses `request=request, name=` kwargs (newer Starlette)
-- `dataset.yaml` — uses absolute path (YOLO resolves relative paths from wrong base)
+- `dataset.yaml` — changed from hardcoded absolute macOS path to relative path; resolved at runtime via `resolve_dataset_path()` in train.py and evaluate.py for cross-platform support (macOS/Windows/Linux)
+- `dataset.yaml` comment said "6 classes" — corrected to 5 classes
+- `train.yaml` device — changed from `cpu` to `auto`; auto-detects MPS (Apple Silicon), CUDA (NVIDIA), or CPU fallback
+- `train.py` — added `detect_device()` using `platform.system()` + `torch.backends.mps` / `torch.cuda`
 - Draw toolbar overlap — center button moved to top-right, hides in draw mode
 - Leaflet Draw dark-themed via CSS overrides
+
+### Engine & Drone Modules (built 2026-04-03)
+
+```
+engine/
+├── __init__.py
+├── decision.py             ← DBSCAN clustering, pixel→GPS, convex hull spray zones, severity scoring
+├── planner.py              ← Lawnmower scan waypoints, nearest-neighbour TSP spray path, MAVLink + QGC export
+├── ingest.py               ← EXIF GPS extraction, ML inference hookup, folder watcher
+└── base_station.py         ← Full orchestrator: plan→fly→ingest→detect→cluster→spray
+
+drone/
+├── __init__.py
+└── comms.py                ← DroneLink class: MAVLink connect, mission upload, telemetry, camera/spray control
+```
+
+**Decision Engine (`engine/decision.py`):**
+- `pixel_to_gps()` — converts bounding box pixel centre to GPS using altitude + camera FOV trig
+- `cluster_detections()` — DBSCAN on GPS coords, eps in metres, filters healthy + low-confidence
+- `generate_spray_zones()` — convex hull + configurable buffer per cluster
+- `score_severity()` — 0-1 score using disease type weight (0.4), confidence (0.4), count (0.2)
+- `process_detections()` — end-to-end pipeline with optional DB persistence
+- Smoke tested: 3 close detections + 1 outlier → 1 cluster → 1 spray zone
+
+**Mission Planner (`engine/planner.py`):**
+- `generate_scan_waypoints()` — lawnmower pattern over bounding box, configurable altitude/overlap/FOV
+- `optimize_spray_path()` — nearest-neighbour TSP starting from home position
+- `to_mavlink_mission()` — converts to pymavlink-compatible mission item dicts
+- `mission_to_qgc_plan()` — exports QGroundControl-compatible .plan JSON
+- Smoke tested: ~400m×330m polygon → 357 waypoints; 3 spray zones → 5 waypoints (takeoff + 3 + RTL)
+
+**Image Ingestion (`engine/ingest.py`):**
+- `extract_gps_from_exif()` — reads GPS lat/lon/altitude from EXIF DMS tags via exifread
+- `process_image()` — EXIF → inference → pixel_to_gps → DB persist
+- `process_folder()` — batch process all images in a directory
+- `watch_folder()` — polling watcher for real-time image processing
+
+**Drone Comms (`drone/comms.py`):**
+- `DroneLink` class — MAVLink connection via pymavlink (UDP/TCP/serial)
+- `connect()` — waits for heartbeat, auto-detects target system/component
+- `upload_mission()` — full mission upload protocol with ACK handling
+- `get_telemetry()` / `wait_for_telemetry()` — GPS, battery, mode, armed status
+- `arm()`, `disarm()`, `set_mode()`, `arm_and_start_mission()`
+- `trigger_camera()` — MAV_CMD_DO_DIGICAM_CONTROL
+- `set_spray_pump()` — relay-based spray pump toggle
+
+**Base Station (`engine/base_station.py`):**
+- `BaseStation` class — central orchestrator
+- `plan_scan_mission()` / `start_scan_mission()` — plan + upload to scout
+- `process_scout_images()` — ingest → cluster → spray zones → health map update
+- `watch_scout_images()` — real-time folder watcher mode
+- `plan_spray_mission()` / `start_spray_mission()` — plan + upload to treatment drone
+- `export_scan_plan()` / `export_spray_plan()` — QGC .plan file export
+- Works without live drones (plans are saved to DB and can be exported)
 
 ---
 
@@ -99,67 +156,24 @@ dashboard/
 
 ### 1. Train the ML Model (BLOCKED — needs GPU)
 
-CPU training on M4 is too slow for 40K images. Options:
-- **`device=mps`** — Apple Silicon GPU, try this first:
-  ```bash
-  python ml/training/train.py --device mps --epochs 5 --batch 16
-  ```
-- **Google Colab** — upload `ml/` folder, use free T4 GPU
-- **Subsample** — reduce dataset to 5K images for quick validation
+`train.yaml` now has `device: auto` which will auto-detect MPS on Apple Silicon:
+```bash
+python ml/training/train.py --epochs 5 --batch 16
+```
+Or override explicitly:
+```bash
+python ml/training/train.py --device mps --epochs 5 --batch 16
+```
 
 Once trained, evaluate:
 ```bash
 python ml/training/evaluate.py
 ```
 
-### 2. Decision Engine (new: `engine/decision.py`)
-
-Pure Python, no hardware needed. Build:
-- `pixel_to_gps(bbox, image_gps, altitude, camera_fov)` — convert pixel detection to GPS coord
-- `cluster_detections(detections, eps=2m, min_samples=2)` — DBSCAN clustering
-- `generate_spray_zones(clusters)` — convex hull + 1m buffer per cluster
-- `score_severity(cluster)` — severity based on detection count, confidence, disease type
-- Wire output into dashboard API (create spray zones from clustered detections)
-
-Dependencies: `scikit-learn` (DBSCAN), `shapely` (geometry), `geopy` (GPS math) — all in requirements.txt except shapely
-
-### 3. Mission Planner (new: `engine/planner.py`)
-
-- `generate_lawnmower_waypoints(scan_area_polygon, altitude, overlap, camera_fov)` — zigzag flight path
-- `optimize_spray_path(spray_zones)` — nearest-neighbor or simple TSP
-- `to_mavlink_mission(waypoints)` — convert to MAVLink mission items
-
-### 4. Drone Communication (new: `drone/comms.py`)
-
-- MAVLink connection handler (WiFi/serial)
-- Upload mission waypoints to drone
-- Monitor drone telemetry (GPS, battery, status)
-- Trigger camera capture (scout) or spray pump (treatment)
-
-Dependencies: `pymavlink` or `dronekit` — add to requirements.txt
-
-### 5. Image Ingestion Pipeline (new: `engine/ingest.py`)
-
-- Watch folder or receive images via API
-- Extract GPS from EXIF metadata (`Pillow` or `exifread`)
-- Run ML inference via `ml.inference.detect.detect_diseases()`
-- Feed results to decision engine
-- Push detections + spray zones to dashboard DB
-
-### 6. Base Station Orchestrator (new: `engine/base_station.py`)
-
-Ties everything together:
-1. Dashboard sends scan area → mission planner generates waypoints
-2. Upload waypoints to scout drone via comms
-3. Scout flies, images come in → ingestion → inference → decision engine
-4. Spray zones appear on dashboard for approval
-5. Operator approves → mission planner generates spray path
-6. Upload to treatment drone → fly and spray
-7. Log everything
-
-### 7. Dashboard Enhancements (later)
+### 2. Dashboard Enhancements (later)
 
 - Real-time WebSocket updates (drone telemetry, live detections)
+- Wire new engine APIs into dashboard (scan area → mission planner, approval → spray mission)
 - Mission progress tracking on map (drone position)
 - Image viewer for individual detections
 - Historical comparison (health over time)
@@ -169,8 +183,8 @@ Ties everything together:
 ## Environment
 
 - **Python:** 3.11 (venv: `drn-env/`)
-- **Key packages installed:** ultralytics, torch, opencv-python, albumentations, scikit-learn, fastapi, uvicorn, jinja2
-- **Missing packages for next phase:** `shapely`, `pymavlink` or `dronekit`, `exifread`
+- **Key packages installed:** ultralytics, torch, opencv-python, albumentations, scikit-learn, fastapi, uvicorn, jinja2, shapely, pymavlink, exifread
+- **All dependencies installed** — no missing packages
 - **Run dashboard:** `source drn-env/bin/activate && uvicorn dashboard.app:app --reload --port 8000`
 
 ---
@@ -203,6 +217,13 @@ disease-drone/
 │   ├── static/css/style.css
 │   ├── static/js/app.js
 │   └── templates/index.html
-├── drone/                      ← Empty (not yet built)
-└── engine/                     ← Does not exist yet (decision engine, planner, ingest)
+├── engine/
+│   ├── __init__.py
+│   ├── decision.py             ← DBSCAN clustering, pixel→GPS, spray zones
+│   ├── planner.py              ← Lawnmower waypoints, TSP spray path, MAVLink/QGC export
+│   ├── ingest.py               ← EXIF GPS extraction, inference hookup, folder watcher
+│   └── base_station.py         ← Full orchestrator
+└── drone/
+    ├── __init__.py
+    └── comms.py                ← DroneLink: MAVLink connect, mission upload, telemetry
 ```

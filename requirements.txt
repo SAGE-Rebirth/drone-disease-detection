@@ -1,29 +1,34 @@
 # ML Training & Inference
-ultralytics>=8.0.0
-torch>=2.0.0
-torchvision>=0.15.0
-onnx>=1.14.0
-onnxruntime>=1.15.0
+ultralytics==8.4.33
+torch==2.11.0
+torchvision==0.26.0
+onnx==1.21.0
+onnxruntime==1.24.4
 
 # Image Processing & Augmentation
-opencv-python>=4.8.0
-Pillow>=10.0.0
-albumentations>=1.3.0
+opencv-python==4.13.0.92
+Pillow==12.1.1
+albumentations==2.0.8
 
 # Data Science
-numpy>=1.24.0
-pandas>=2.0.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
-scikit-learn>=1.3.0
+numpy==2.4.4
+pandas==3.0.2
+matplotlib==3.10.8
+seaborn==0.13.2
+scikit-learn==1.8.0
 
 # Dashboard
-fastapi>=0.100.0
-uvicorn>=0.23.0
-jinja2>=3.1.0
-python-multipart>=0.0.6
+fastapi==0.135.2
+uvicorn==0.42.0
+jinja2==3.1.6
+python-multipart==0.0.22
+
+# Decision Engine & Mission Planner
+shapely==2.1.2
+pymavlink==2.4.49
+exifread==3.5.1
 
 # Utilities
-pyyaml>=6.0
-tqdm>=4.65.0
-gdown>=4.7.0
+pyyaml==6.0.3
+tqdm==4.67.3
+gdown==5.2.1

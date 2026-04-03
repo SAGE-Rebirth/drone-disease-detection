@@ -2,10 +2,9 @@
 ml/data/raw/
 ml/data/processed/
 ml/data/augmented/
-ml/models/*.pt
-ml/models/*.onnx
 
 # Model weights
+ml/models/
 *.pt
 *.onnx
 
@@ -29,6 +28,8 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude
 .claude/
 
 # Training runs
@@ -38,3 +39,13 @@ wandb/
 # Environment
 .env
 .env.*
+
+# Database
+*.db
+
+# QGroundControl plans (generated)
+*.plan
+
+# Temp files
+tmp/
+*.tmp

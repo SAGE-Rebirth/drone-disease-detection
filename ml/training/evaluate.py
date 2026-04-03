@@ -14,12 +14,32 @@ Usage:
 """
 
 import argparse
+import tempfile
 from pathlib import Path
+
+import yaml
 from ultralytics import YOLO
 
 ML_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL = ML_DIR / "models" / "disease_det_v1" / "weights" / "best.pt"
 DEFAULT_DATA = ML_DIR / "configs" / "dataset.yaml"
+
+
+def resolve_dataset_path(data_config_path):
+    """Ensure the 'path' field in dataset.yaml is an absolute, platform-correct path."""
+    data_config_path = Path(data_config_path)
+    with open(data_config_path, "r") as f:
+        ds_cfg = yaml.safe_load(f)
+
+    raw_path = ds_cfg.get("path", "")
+    if raw_path and not Path(raw_path).is_absolute():
+        resolved = (data_config_path.parent / raw_path).resolve()
+        ds_cfg["path"] = str(resolved)
+        tmp = Path(tempfile.mkdtemp()) / "dataset.yaml"
+        with open(tmp, "w") as f:
+            yaml.dump(ds_cfg, f, default_flow_style=False)
+        return str(tmp)
+    return str(data_config_path)
 
 
 def evaluate(model_path, data_path, split="test", conf=0.25, iou=0.6):
@@ -29,9 +49,12 @@ def evaluate(model_path, data_path, split="test", conf=0.25, iou=0.6):
     print(f"Split:   {split}")
     print()
 
+    # Resolve relative paths in dataset config
+    resolved_data = resolve_dataset_path(data_path)
+
     model = YOLO(str(model_path))
     metrics = model.val(
-        data=str(data_path),
+        data=resolved_data,
         split=split,
         conf=conf,
         iou=iou,

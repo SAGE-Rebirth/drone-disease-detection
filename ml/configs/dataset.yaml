@@ -1,12 +1,13 @@
 # Disease Drone — YOLO Dataset Config
-# Paths are relative to this file's parent directory (ml/)
+# 'path' is resolved at runtime by train.py / evaluate.py relative to ml/
+# Use a relative path so the project works on any machine (macOS, Windows, Linux).
 
-path: /Volumes/Work/data/projects/disease-drone/ml/data/processed
+path: ../ml/data/processed
 train: train/images
 val: val/images
 test: test/images
 
-# Class names (6 classes)
+# Class names (5 classes)
 names:
   0: healthy
   1: leaf_blight
