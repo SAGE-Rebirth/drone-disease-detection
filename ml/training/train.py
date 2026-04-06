@@ -112,11 +112,39 @@ def train(config):
     remaining = full_epochs - freeze_epochs
     if remaining > 0:
         print(f"\n--- Phase 2: Full model ({remaining} epochs) ---")
-        # Load best weights from warmup
-        warmup_best = Path(config["project"]) / config_phase1["name"] / "weights" / "best.pt"
-        if warmup_best.exists():
-            model = YOLO(str(warmup_best))
-        config_phase2 = {**config, "epochs": remaining}
+
+        # Use the trainer's actual save_dir (handles Ultralytics auto-increment
+        # naming like disease_det_v1_warmup2 on re-runs).
+        warmup_dir = Path(model.trainer.save_dir)
+        warmup_best = warmup_dir / "weights" / "best.pt"
+
+        if not warmup_best.exists():
+            raise FileNotFoundError(
+                f"Phase 1 completed but best weights not found at {warmup_best}. "
+                f"Cannot proceed to Phase 2."
+            )
+
+        # Reload the model fresh from the warmup checkpoint.
+        model = YOLO(str(warmup_best))
+
+        # ── Fix for Ultralytics KeyError: 'model' ──
+        # When YOLO() is instantiated from a local checkpoint, self.overrides
+        # may not contain the 'model' key because Ultralytics prunes it from
+        # ckpt["train_args"] when saving. The next model.train() call reads
+        # self.overrides["model"] and crashes with KeyError. Setting it
+        # explicitly patches the overrides dict before training starts.
+        model.overrides["model"] = str(warmup_best)
+
+        # Build Phase 2 kwargs.
+        # Strip 'freeze' (we want all layers unfrozen) and 'resume' (this is
+        # fine-tuning from a checkpoint, not resuming an interrupted run) in
+        # case they leaked in from the YAML.
+        config_phase2 = {
+            k: v for k, v in config.items() if k not in ("freeze", "resume")
+        }
+        config_phase2["epochs"] = remaining
+        config_phase2["name"] = config.get("name", "disease_det_v1")
+
         results = model.train(**config_phase2)
     else:
         results = results_warmup
