@@ -137,6 +137,85 @@ def get_mission(mission_id):
     return dict(row) if row else None
 
 
+def update_mission_waypoints(mission_id, waypoints):
+    """Persist a mission's waypoint list (as JSON)."""
+    conn = get_db()
+    conn.execute(
+        "UPDATE missions SET waypoints=? WHERE id=?",
+        (json.dumps(waypoints), mission_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_mission_full(mission_id):
+    """Get mission with all related data: waypoints, detections, zones, treatments."""
+    conn = get_db()
+    mission_row = conn.execute(
+        "SELECT * FROM missions WHERE id=?", (mission_id,)
+    ).fetchone()
+    if not mission_row:
+        conn.close()
+        return None
+
+    mission = dict(mission_row)
+
+    # Detections for this mission
+    det_rows = conn.execute(
+        "SELECT * FROM detections WHERE mission_id=? ORDER BY detected_at",
+        (mission_id,),
+    ).fetchall()
+    mission["detections"] = [dict(r) for r in det_rows]
+
+    # Spray zones generated from this scan mission
+    zone_rows = conn.execute(
+        "SELECT * FROM spray_zones WHERE mission_id=? ORDER BY id",
+        (mission_id,),
+    ).fetchall()
+    mission["spray_zones"] = [dict(r) for r in zone_rows]
+
+    # Treatments performed in this mission
+    treat_rows = conn.execute(
+        "SELECT t.*, sz.disease_type FROM treatments t "
+        "LEFT JOIN spray_zones sz ON t.spray_zone_id=sz.id "
+        "WHERE t.mission_id=? ORDER BY t.treated_at",
+        (mission_id,),
+    ).fetchall()
+    mission["treatments"] = [dict(r) for r in treat_rows]
+
+    conn.close()
+    return mission
+
+
+def get_missions_summary(limit=100, mission_type=None, status=None):
+    """Mission list with aggregated counts (detections, zones, treatments).
+
+    Used by the mission history panel — avoids N+1 queries.
+    """
+    conn = get_db()
+    query = """
+        SELECT m.*,
+            (SELECT COUNT(*) FROM detections d WHERE d.mission_id=m.id) AS detection_count,
+            (SELECT COUNT(*) FROM spray_zones sz WHERE sz.mission_id=m.id) AS zone_count,
+            (SELECT COUNT(*) FROM treatments t WHERE t.mission_id=m.id) AS treatment_count
+        FROM missions m
+        WHERE 1=1
+    """
+    params = []
+    if mission_type:
+        query += " AND m.type=?"
+        params.append(mission_type)
+    if status:
+        query += " AND m.status=?"
+        params.append(status)
+    query += " ORDER BY m.created_at DESC LIMIT ?"
+    params.append(limit)
+
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # ── Detection CRUD ──
 
 def add_detection(mission_id, class_name, confidence, lat, lon, bbox=None, image_path=None):

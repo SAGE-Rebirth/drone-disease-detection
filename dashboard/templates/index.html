@@ -11,7 +11,6 @@
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <!-- Leaflet Draw CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
 
     <!-- App CSS -->
@@ -28,11 +27,11 @@
                     <path d="M2 12l10 5 10-5"/>
                 </svg>
                 <h1>Disease Drone</h1>
-                <span>PoC Dashboard</span>
+                <span>v0.2 PoC</span>
             </div>
             <div class="header-status">
                 <div class="status-indicator">
-                    <span class="status-dot" id="scoutDot" title="Scout Drone"></span>
+                    <span class="status-dot offline" id="scoutDot" title="Scout Drone"></span>
                     Scout
                 </div>
                 <div class="status-indicator">
@@ -42,6 +41,10 @@
                 <div class="status-indicator">
                     <span class="status-dot" title="Base Station"></span>
                     Base Station
+                </div>
+                <div class="ws-indicator" id="wsIndicator" title="WebSocket connection">
+                    <span class="ws-dot"></span>
+                    Live
                 </div>
             </div>
         </header>
@@ -82,22 +85,55 @@
                 </div>
             </div>
 
+            <!-- Disease Distribution Chart -->
+            <div>
+                <div class="section-title">Disease Distribution</div>
+                <div class="dist-chart" id="distChart"></div>
+            </div>
+
             <!-- Mission Controls -->
             <div>
                 <div class="section-title">Mission Control</div>
                 <div class="mission-controls">
-                    <button class="btn" onclick="toggleDrawMode()">
+                    <button class="btn btn-primary" onclick="openWizard()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                        New Scan Mission
+                    </button>
+                    <button class="btn" onclick="toggleDrawMode()" id="drawBtn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
-                        Define Scan Area
+                        Quick Draw Area
                     </button>
-                    <button class="btn btn-primary" onclick="startScanMission()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        Start Scan Mission
+                    <button class="btn btn-success" onclick="planSpray()" id="planSprayBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg>
+                        Plan Spray Mission
                     </button>
-                    <button class="btn btn-success" onclick="toggleHeatmap()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
-                        Toggle Health Heatmap
-                    </button>
+                </div>
+            </div>
+
+            <!-- Map Controls -->
+            <div>
+                <div class="section-title">Map Layers</div>
+                <div class="map-layer-toggles">
+                    <label class="layer-toggle">
+                        <input type="checkbox" id="toggleDetections" checked>
+                        <span>Detections</span>
+                    </label>
+                    <label class="layer-toggle">
+                        <input type="checkbox" id="toggleZones" checked>
+                        <span>Spray Zones</span>
+                    </label>
+                    <label class="layer-toggle">
+                        <input type="checkbox" id="toggleHeatmap">
+                        <span>Health Heatmap</span>
+                    </label>
+                    <label class="layer-toggle">
+                        <input type="checkbox" id="toggleFlightPath" checked>
+                        <span>Flight Path</span>
+                    </label>
+                    <label class="layer-toggle">
+                        <input type="checkbox" id="toggleTrail" checked>
+                        <span>Drone Trail</span>
+                    </label>
                 </div>
             </div>
 
@@ -105,27 +141,27 @@
             <div>
                 <div class="section-title">Disease Legend</div>
                 <div class="legend-list">
-                    <div class="legend-item">
+                    <div class="legend-item" data-disease="healthy">
                         <span class="legend-dot healthy"></span>
                         Healthy
                         <span class="legend-count" id="legend-count-healthy">0</span>
                     </div>
-                    <div class="legend-item">
+                    <div class="legend-item" data-disease="leaf_blight">
                         <span class="legend-dot leaf_blight"></span>
                         Leaf Blight
                         <span class="legend-count" id="legend-count-leaf_blight">0</span>
                     </div>
-                    <div class="legend-item">
+                    <div class="legend-item" data-disease="leaf_spot">
                         <span class="legend-dot leaf_spot"></span>
                         Leaf Spot
                         <span class="legend-count" id="legend-count-leaf_spot">0</span>
                     </div>
-                    <div class="legend-item">
+                    <div class="legend-item" data-disease="rust">
                         <span class="legend-dot rust"></span>
                         Rust
                         <span class="legend-count" id="legend-count-rust">0</span>
                     </div>
-                    <div class="legend-item">
+                    <div class="legend-item" data-disease="powdery_mildew">
                         <span class="legend-dot powdery_mildew"></span>
                         Powdery Mildew
                         <span class="legend-count" id="legend-count-powdery_mildew">0</span>
@@ -133,14 +169,14 @@
                 </div>
             </div>
 
-            <!-- Demo -->
+            <!-- Demo Controls -->
             <div style="margin-top: auto; display: flex; flex-direction: column; gap: 6px;">
                 <button class="btn" onclick="seedDemoData()" style="width:100%;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
                     Load Demo Data
                 </button>
                 <button class="btn btn-danger" onclick="clearAllData()" style="width:100%;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
                     Clear All Data
                 </button>
             </div>
@@ -149,11 +185,58 @@
         <!-- ── Map ── -->
         <main class="map-container">
             <div id="map"></div>
+
             <div class="map-mode-label" id="mapModeLabel">DRAW SCAN AREA</div>
 
+            <!-- Telemetry HUD overlay -->
+            <div class="telemetry-hud" id="telemetryHud">
+                <div class="hud-header">
+                    <span class="hud-icon" id="hudDroneIcon">🛰</span>
+                    <span class="hud-title" id="hudTitle">SCOUT DRONE</span>
+                    <span class="hud-mode" id="hudMode">STANDBY</span>
+                </div>
+                <div class="hud-grid">
+                    <div class="hud-stat">
+                        <div class="hud-label">ALT</div>
+                        <div class="hud-value"><span id="hudAlt">0</span><span class="hud-unit">m</span></div>
+                    </div>
+                    <div class="hud-stat">
+                        <div class="hud-label">SPD</div>
+                        <div class="hud-value"><span id="hudSpeed">0.0</span><span class="hud-unit">m/s</span></div>
+                    </div>
+                    <div class="hud-stat">
+                        <div class="hud-label">HDG</div>
+                        <div class="hud-value"><span id="hudHeading">0</span><span class="hud-unit">°</span></div>
+                    </div>
+                    <div class="hud-stat hud-battery">
+                        <div class="hud-label">BAT</div>
+                        <div class="hud-value">
+                            <span id="hudBattery">--</span><span class="hud-unit">%</span>
+                            <div class="battery-bar"><div class="battery-fill" id="batteryFill"></div></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="hud-progress">
+                    <div class="hud-progress-label">
+                        <span>MISSION PROGRESS</span>
+                        <span id="hudProgress">0%</span>
+                    </div>
+                    <div class="hud-progress-bar">
+                        <div class="hud-progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map Toolbar -->
             <div class="map-toolbar" id="mapToolbar">
                 <button class="btn btn-sm" onclick="centerMap()" title="Center on detections">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>
+                </button>
+                <button class="btn btn-sm" onclick="followDrone()" id="followBtn" title="Follow drone">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6"/><path d="M1 12h6m6 0h6"/></svg>
+                </button>
+                <button class="btn btn-sm" onclick="clearTrail()" title="Clear drone trail">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>
             </div>
         </main>
@@ -161,20 +244,53 @@
         <!-- ── Right Panel ── -->
         <aside class="panel">
             <div class="panel-tabs">
-                <div class="panel-tab active" data-tab="detections">Detections</div>
-                <div class="panel-tab" data-tab="zones">Spray Zones</div>
+                <div class="panel-tab active" data-tab="missions">Missions</div>
+                <div class="panel-tab" data-tab="detections">Detections</div>
+                <div class="panel-tab" data-tab="zones">Zones</div>
                 <div class="panel-tab" data-tab="treatments">Log</div>
             </div>
             <div class="panel-content">
-                <!-- Detections Tab -->
-                <div class="panel-section active" id="section-detections">
-                    <div id="detectionList">
+                <!-- Missions History Tab -->
+                <div class="panel-section active" id="section-missions">
+                    <div class="filter-bar">
+                        <select id="missionFilterType" onchange="loadMissionHistory()">
+                            <option value="">All types</option>
+                            <option value="scan">Scan</option>
+                            <option value="spray">Spray</option>
+                        </select>
+                        <select id="missionFilterStatus" onchange="loadMissionHistory()">
+                            <option value="">All status</option>
+                            <option value="planned">Planned</option>
+                            <option value="in_progress">In progress</option>
+                            <option value="completed">Completed</option>
+                            <option value="aborted">Aborted</option>
+                        </select>
+                    </div>
+                    <div id="missionList">
                         <div class="empty-state">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
                             </svg>
-                            <p>No detections yet.<br>Run a scan mission or load demo data.</p>
+                            <p>No missions yet.<br>Create one to get started.</p>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Detections Tab -->
+                <div class="panel-section" id="section-detections">
+                    <div class="filter-bar">
+                        <input type="text" id="detSearch" placeholder="Filter…" oninput="renderDetections()">
+                        <select id="detFilterDisease" onchange="renderDetections()">
+                            <option value="">All diseases</option>
+                            <option value="healthy">Healthy</option>
+                            <option value="leaf_blight">Leaf Blight</option>
+                            <option value="leaf_spot">Leaf Spot</option>
+                            <option value="rust">Rust</option>
+                            <option value="powdery_mildew">Powdery Mildew</option>
+                        </select>
+                    </div>
+                    <div id="detectionList">
+                        <div class="empty-state"><p>No detections yet.</p></div>
                     </div>
                 </div>
 
@@ -195,14 +311,115 @@
         </aside>
     </div>
 
+    <!-- ─── Mission Wizard Modal ─── -->
+    <div class="modal-backdrop" id="wizardModal">
+        <div class="modal modal-wizard">
+            <div class="modal-header">
+                <h2>New Scan Mission</h2>
+                <button class="modal-close" onclick="closeWizard()">×</button>
+            </div>
+
+            <div class="wizard-steps">
+                <div class="wizard-step active" data-step="1"><span>1</span>Area</div>
+                <div class="wizard-step" data-step="2"><span>2</span>Configure</div>
+                <div class="wizard-step" data-step="3"><span>3</span>Preview</div>
+                <div class="wizard-step" data-step="4"><span>4</span>Launch</div>
+            </div>
+
+            <div class="modal-body">
+                <!-- Step 1: Area -->
+                <div class="wizard-pane active" data-pane="1">
+                    <p class="wizard-help">Draw the scan area on the map. The drone will fly a lawnmower pattern over this region.</p>
+                    <div class="wizard-action">
+                        <button class="btn btn-primary" onclick="wizardStartDraw()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/></svg>
+                            Draw Area on Map
+                        </button>
+                    </div>
+                    <div class="wizard-status" id="wizardAreaStatus">No area drawn yet.</div>
+                </div>
+
+                <!-- Step 2: Configure -->
+                <div class="wizard-pane" data-pane="2">
+                    <p class="wizard-help">Configure flight parameters.</p>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>Altitude (m)</label>
+                            <input type="number" id="wzAltitude" value="4" min="2" max="50" step="0.5">
+                        </div>
+                        <div class="form-field">
+                            <label>Image Overlap (%)</label>
+                            <input type="number" id="wzOverlap" value="30" min="10" max="80" step="5">
+                        </div>
+                        <div class="form-field">
+                            <label>Flight Speed (m/s)</label>
+                            <input type="number" id="wzSpeed" value="2" min="0.5" max="10" step="0.5">
+                        </div>
+                        <div class="form-field">
+                            <label>Camera HFOV (°)</label>
+                            <input type="number" id="wzHfov" value="62.2" step="0.1">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Preview -->
+                <div class="wizard-pane" data-pane="3">
+                    <p class="wizard-help">Generated lawnmower path. Review the estimated mission stats.</p>
+                    <div class="preview-stats" id="previewStats"></div>
+                </div>
+
+                <!-- Step 4: Launch -->
+                <div class="wizard-pane" data-pane="4">
+                    <p class="wizard-help">Mission ready. Choose how to execute it.</p>
+                    <div class="launch-options">
+                        <button class="btn btn-primary" onclick="wizardLaunch('simulate')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Simulate Flight
+                        </button>
+                        <button class="btn" onclick="wizardLaunch('save')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/></svg>
+                            Save as Plan
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn" onclick="wizardPrev()" id="wzPrevBtn">Back</button>
+                <button class="btn btn-primary" onclick="wizardNext()" id="wzNextBtn">Next</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Mission Detail Modal ─── -->
+    <div class="modal-backdrop" id="missionModal">
+        <div class="modal modal-detail">
+            <div class="modal-header">
+                <h2 id="mdTitle">Mission Detail</h2>
+                <button class="modal-close" onclick="closeMissionDetail()">×</button>
+            </div>
+            <div class="modal-body" id="mdBody">
+                <div class="empty-state"><p>Loading...</p></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="exportMissionPlan()" id="mdExportBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export QGC Plan
+                </button>
+                <button class="btn btn-primary" onclick="simulateCurrentMission()" id="mdSimBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Simulate Flight
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notifications -->
     <div class="toast-container" id="toasts"></div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Leaflet Draw -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
-    <!-- Leaflet Heat -->
     <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 
     <!-- App JS -->

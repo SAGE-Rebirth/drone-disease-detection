@@ -710,3 +710,777 @@ body {
 
 /* ── Leaflet dark tile filter ── */
 .leaflet-tile-pane { filter: brightness(0.7) contrast(1.1) saturate(0.8); }
+
+/* ════════════════════════════════════════════
+   v0.2 — Mission History, Wizard, HUD, Tracking
+   ════════════════════════════════════════════ */
+
+/* ── WebSocket indicator ── */
+.ws-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    background: var(--bg-card);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.ws-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: background 0.3s;
+}
+
+.ws-indicator.connected .ws-dot {
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ── Disease Distribution Chart ── */
+.dist-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dist-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+}
+
+.dist-label {
+    flex: 0 0 80px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.dist-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.dist-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dist-count {
+    flex: 0 0 32px;
+    text-align: right;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Map Layer Toggles ── */
+.map-layer-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.layer-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-secondary);
+    transition: background var(--transition);
+}
+
+.layer-toggle:hover {
+    background: var(--bg-card);
+}
+
+.layer-toggle input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-input);
+    cursor: pointer;
+    position: relative;
+    transition: all var(--transition);
+}
+
+.layer-toggle input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.layer-toggle input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 4px;
+    width: 4px;
+    height: 7px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* ── Filter Bar ── */
+.filter-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.filter-bar select,
+.filter-bar input {
+    flex: 1;
+    padding: 6px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: inherit;
+    transition: border-color var(--transition);
+}
+
+.filter-bar select:focus,
+.filter-bar input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.filter-bar select option {
+    background: var(--bg-secondary);
+}
+
+/* ── Mission History Cards ── */
+.mission-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    animation: slide-in 0.3s ease;
+    transition: all var(--transition);
+}
+
+.mission-card:hover {
+    border-color: var(--accent);
+    transform: translateX(4px);
+    box-shadow: 0 0 16px var(--accent-glow);
+}
+
+.mission-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.mission-card-id {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.mission-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-glow);
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.mission-icon svg { width: 14px; height: 14px; }
+
+.mission-icon.spray { background: var(--success-bg); color: var(--success); }
+
+.mission-card-meta {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+.mission-card-meta .pill {
+    background: var(--bg-input);
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.badge-planned { background: var(--info-bg); color: var(--info); }
+.badge-in_progress { background: var(--warning-bg); color: var(--warning); animation: pulse-bg 1.5s ease-in-out infinite; }
+.badge-completed { background: var(--success-bg); color: var(--success); }
+.badge-aborted { background: var(--danger-bg); color: var(--danger); }
+
+@keyframes pulse-bg {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ── Telemetry HUD ── */
+.telemetry-hud {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1000;
+    background: rgba(17, 24, 39, 0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    min-width: 280px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--accent-glow);
+    opacity: 0;
+    transform: translateY(-12px);
+    pointer-events: none;
+    transition: opacity var(--transition), transform var(--transition);
+}
+
+.telemetry-hud.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.hud-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.hud-icon {
+    font-size: 18px;
+}
+
+.hud-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.hud-mode {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: var(--accent-glow);
+    color: var(--accent);
+    letter-spacing: 0.05em;
+}
+
+.hud-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.hud-stat {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+.hud-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.hud-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+
+.hud-unit {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 2px;
+    font-weight: 500;
+}
+
+.hud-battery {
+    grid-column: span 2;
+}
+
+.battery-bar {
+    margin-top: 4px;
+    height: 4px;
+    background: var(--bg-secondary);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.battery-fill {
+    height: 100%;
+    background: var(--success);
+    transition: width 0.5s ease, background 0.3s;
+}
+
+.battery-fill.low { background: var(--warning); }
+.battery-fill.critical { background: var(--danger); animation: pulse-bg 1s ease-in-out infinite; }
+
+.hud-progress {
+    margin-top: 4px;
+}
+
+.hud-progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.hud-progress-bar {
+    height: 5px;
+    background: var(--bg-input);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.hud-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--info));
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px var(--accent);
+}
+
+/* ── Drone marker ── */
+.drone-marker {
+    width: 32px;
+    height: 32px;
+    background: var(--accent);
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px var(--accent-glow), 0 0 16px var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 18px;
+    transition: transform 0.3s linear;
+}
+
+.drone-marker::after {
+    content: '';
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 8px solid transparent;
+    border-bottom-color: var(--accent);
+}
+
+.drone-marker.treatment {
+    background: var(--success);
+    box-shadow: 0 0 0 4px var(--success-bg), 0 0 16px var(--success);
+}
+
+.drone-marker.treatment::after { border-bottom-color: var(--success); }
+
+/* ── Modal ── */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 14, 23, 0.75);
+    backdrop-filter: blur(8px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+
+.modal-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--accent-glow);
+    display: flex;
+    flex-direction: column;
+    max-width: 90vw;
+    max-height: 90vh;
+    transform: scale(0.95) translateY(20px);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-backdrop.visible .modal {
+    transform: scale(1) translateY(0);
+}
+
+.modal-wizard { width: 540px; }
+.modal-detail { width: 720px; }
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 24px;
+    cursor: pointer;
+    line-height: 1;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition);
+}
+
+.modal-close:hover {
+    background: var(--bg-card);
+    color: var(--danger);
+}
+
+.modal-body {
+    padding: 20px 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* ── Wizard Steps ── */
+.wizard-steps {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+}
+
+.wizard-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex: 1;
+    position: relative;
+    transition: color var(--transition);
+}
+
+.wizard-step:not(:last-child)::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+    margin-left: 8px;
+}
+
+.wizard-step span {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--bg-input);
+    color: var(--text-muted);
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+
+.wizard-step.active {
+    color: var(--accent);
+}
+
+.wizard-step.active span {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.wizard-step.done span {
+    background: var(--success);
+    border-color: var(--success);
+    color: white;
+}
+
+.wizard-pane {
+    display: none;
+}
+
+.wizard-pane.active {
+    display: block;
+    animation: fade-in 0.3s ease;
+}
+
+@keyframes fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.wizard-help {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    line-height: 1.6;
+}
+
+.wizard-action {
+    display: flex;
+    justify-content: center;
+    margin: 16px 0;
+}
+
+.wizard-status {
+    text-align: center;
+    padding: 12px;
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.wizard-status.success {
+    background: var(--success-bg);
+    color: var(--success);
+    border: 1px solid var(--success);
+}
+
+/* ── Form Grid ── */
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.form-field label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+.form-field input {
+    padding: 10px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color var(--transition);
+}
+
+.form-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ── Preview Stats ── */
+.preview-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.preview-stat {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+}
+
+.preview-stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.preview-stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+
+.preview-stat-unit {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 4px;
+}
+
+/* ── Launch Options ── */
+.launch-options {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 24px;
+}
+
+.launch-options .btn {
+    flex: 1;
+    padding: 16px;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.launch-options .btn svg {
+    width: 24px;
+    height: 24px;
+    margin-bottom: 4px;
+}
+
+/* ── Mission Detail Modal Body ── */
+.detail-section {
+    margin-bottom: 18px;
+}
+
+.detail-section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.detail-stat {
+    background: var(--bg-card);
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    text-align: center;
+}
+
+.detail-stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.detail-stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+}
+
+.detail-list {
+    max-height: 180px;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+    padding: 8px;
+}
+
+.detail-list-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 8px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.detail-list-item:last-child { border-bottom: none; }
+
+/* ── Flight Path Marker (Leaflet) ── */
+.flight-path {
+    stroke-dasharray: 8 4;
+    animation: dash-flow 1.5s linear infinite;
+}
+
+@keyframes dash-flow {
+    to { stroke-dashoffset: -24; }
+}
+
+/* ── Responsive: collapse panels on narrow screens ── */
+@media (max-width: 1280px) {
+    .telemetry-hud { min-width: 240px; }
+    .telemetry-hud .hud-value { font-size: 16px; }
+}
+

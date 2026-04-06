@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════
-   Disease Drone — Dashboard JS
+   Disease Drone — Dashboard JS (v0.2)
    ══════════════════════════════════════════ */
 
 const API = '/api';
@@ -19,7 +19,7 @@ const DISEASE_LABELS = {
     powdery_mildew: 'Powdery Mildew',
 };
 
-// ── State ──
+// ── Global State ──
 let map;
 let drawControl;
 let drawnItems;
@@ -27,18 +27,48 @@ let detectionMarkers = L.layerGroup();
 let sprayZoneLayer = L.layerGroup();
 let healthHeatLayer = null;
 let scanAreaLayer = L.layerGroup();
-let currentTab = 'detections';
-let mapMode = 'view'; // 'view' | 'draw'
+let flightPathLayer = L.layerGroup();
+let droneMarker = null;
+let droneTrail = null;
+let droneTrailPoints = [];
 
-// ── Init ──
+let currentTab = 'missions';
+let mapMode = 'view';   // 'view' | 'draw' | 'wizard-draw'
+let allDetections = []; // cached for filtering
+let ws = null;
+let wsReconnectTimer = null;
+let followingDrone = false;
+
+// Wizard state
+const wizard = {
+    step: 1,
+    polygon: null,
+    waypoints: null,
+    stats: null,
+    missionId: null,
+};
+
+// Mission detail state
+let currentMissionDetail = null;
+
+// ══════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════
+
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     initTabs();
+    initLayerToggles();
+    initLegendFilter();
+    initWebSocket();
     loadAllData();
     setInterval(loadStats, 15000);
 });
 
-// ── Map Setup ──
+// ══════════════════════════════════════════
+// MAP
+// ══════════════════════════════════════════
+
 function initMap() {
     map = L.map('map', {
         center: [12.9716, 77.5946],
@@ -48,55 +78,47 @@ function initMap() {
 
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
-    // Dark-styled tile layer
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OSM &copy; CARTO',
         maxZoom: 20,
     }).addTo(map);
 
-    // Remove the tile brightness filter since we're using a dark tile layer
     document.querySelector('.leaflet-tile-pane').style.filter = 'none';
 
-    // Layer groups
     detectionMarkers.addTo(map);
     sprayZoneLayer.addTo(map);
     scanAreaLayer.addTo(map);
+    flightPathLayer.addTo(map);
 
-    // Draw control
     drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
 
     drawControl = new L.Control.Draw({
         draw: {
-            polygon: {
-                shapeOptions: {
-                    color: '#3b82f6',
-                    fillColor: '#3b82f620',
-                    weight: 2,
-                },
-                allowIntersection: false,
-            },
-            rectangle: {
-                shapeOptions: {
-                    color: '#3b82f6',
-                    fillColor: '#3b82f620',
-                    weight: 2,
-                },
-            },
-            circle: false,
-            circlemarker: false,
-            marker: false,
-            polyline: false,
+            polygon: { shapeOptions: { color: '#3b82f6', fillColor: '#3b82f620', weight: 2 }, allowIntersection: false },
+            rectangle: { shapeOptions: { color: '#3b82f6', fillColor: '#3b82f620', weight: 2 } },
+            circle: false, circlemarker: false, marker: false, polyline: false,
         },
-        edit: {
-            featureGroup: drawnItems,
-        },
+        edit: { featureGroup: drawnItems },
     });
 
     map.on(L.Draw.Event.CREATED, (e) => {
+        drawnItems.clearLayers();
         drawnItems.addLayer(e.layer);
         setMapMode('view');
-        toast('Scan area defined', 'success');
+
+        if (mapMode === 'wizard-draw' || wizard.step === 1) {
+            captureWizardArea(e.layer);
+        }
+        toast('Scan area captured', 'success');
+    });
+
+    map.on('movestart', () => {
+        // Auto-disable follow when user pans manually
+        if (followingDrone) {
+            const followBtn = document.getElementById('followBtn');
+            // Only disable if not programmatic
+        }
     });
 }
 
@@ -104,9 +126,9 @@ function setMapMode(mode) {
     mapMode = mode;
     const label = document.getElementById('mapModeLabel');
     const toolbar = document.getElementById('mapToolbar');
-    if (mode === 'draw') {
-        map.addControl(drawControl);
-        label.textContent = 'DRAW SCAN AREA — use toolbar on the left';
+    if (mode === 'draw' || mode === 'wizard-draw') {
+        try { map.addControl(drawControl); } catch(e) {}
+        label.textContent = mode === 'wizard-draw' ? 'DRAW SCAN AREA — return to wizard when done' : 'DRAW SCAN AREA';
         label.classList.add('visible');
         toolbar.classList.add('hidden');
     } else {
@@ -120,7 +142,10 @@ function toggleDrawMode() {
     setMapMode(mapMode === 'draw' ? 'view' : 'draw');
 }
 
-// ── Tabs ──
+// ══════════════════════════════════════════
+// TABS & LAYER TOGGLES
+// ══════════════════════════════════════════
+
 function initTabs() {
     document.querySelectorAll('.panel-tab').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -130,11 +155,228 @@ function initTabs() {
             tab.classList.add('active');
             document.getElementById(`section-${target}`).classList.add('active');
             currentTab = target;
+            if (target === 'missions') loadMissionHistory();
         });
     });
 }
 
-// ── Data Loading ──
+function initLayerToggles() {
+    document.getElementById('toggleDetections').addEventListener('change', (e) => {
+        if (e.target.checked) detectionMarkers.addTo(map);
+        else map.removeLayer(detectionMarkers);
+    });
+    document.getElementById('toggleZones').addEventListener('change', (e) => {
+        if (e.target.checked) sprayZoneLayer.addTo(map);
+        else map.removeLayer(sprayZoneLayer);
+    });
+    document.getElementById('toggleHeatmap').addEventListener('change', (e) => {
+        if (!healthHeatLayer) {
+            toast('No health data — load demo first', 'info');
+            e.target.checked = false;
+            return;
+        }
+        if (e.target.checked) healthHeatLayer.addTo(map);
+        else map.removeLayer(healthHeatLayer);
+    });
+    document.getElementById('toggleFlightPath').addEventListener('change', (e) => {
+        if (e.target.checked) flightPathLayer.addTo(map);
+        else map.removeLayer(flightPathLayer);
+    });
+    document.getElementById('toggleTrail').addEventListener('change', (e) => {
+        if (droneTrail) {
+            if (e.target.checked) droneTrail.addTo(map);
+            else map.removeLayer(droneTrail);
+        }
+    });
+}
+
+function initLegendFilter() {
+    document.querySelectorAll('.legend-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const disease = item.dataset.disease;
+            if (!disease) return;
+            const filterSel = document.getElementById('detFilterDisease');
+            filterSel.value = filterSel.value === disease ? '' : disease;
+            // Switch to detections tab
+            document.querySelector('.panel-tab[data-tab="detections"]').click();
+            renderDetections();
+        });
+    });
+}
+
+// ══════════════════════════════════════════
+// WEBSOCKET — Live Telemetry
+// ══════════════════════════════════════════
+
+function initWebSocket() {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${window.location.host}/ws/telemetry`;
+
+    try {
+        ws = new WebSocket(url);
+    } catch(e) {
+        console.error('WebSocket failed:', e);
+        return;
+    }
+
+    ws.onopen = () => {
+        document.getElementById('wsIndicator').classList.add('connected');
+        if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'telemetry') {
+                updateTelemetry(msg.data);
+            } else if (msg.type === 'mission_complete') {
+                toast(`Mission #${msg.mission_id} complete`, 'success');
+                loadAllData();
+            }
+        } catch(e) {
+            console.error('WS parse error:', e);
+        }
+    };
+
+    ws.onclose = () => {
+        document.getElementById('wsIndicator').classList.remove('connected');
+        // Auto-reconnect
+        wsReconnectTimer = setTimeout(initWebSocket, 3000);
+    };
+
+    ws.onerror = () => {
+        document.getElementById('wsIndicator').classList.remove('connected');
+    };
+}
+
+function updateTelemetry(data) {
+    const hud = document.getElementById('telemetryHud');
+
+    if (!data.active) {
+        hud.classList.remove('visible');
+        // Still update mode display
+        document.getElementById('hudMode').textContent = 'STANDBY';
+        // Update header dots
+        document.getElementById('scoutDot').classList.add('offline');
+        document.getElementById('treatDot').classList.add('offline');
+        return;
+    }
+
+    hud.classList.add('visible');
+
+    // Title and icon based on drone type
+    document.getElementById('hudTitle').textContent =
+        data.drone_type === 'spray' || data.drone_type === 'treatment' ? 'TREATMENT DRONE' : 'SCOUT DRONE';
+    document.getElementById('hudDroneIcon').textContent =
+        data.drone_type === 'spray' || data.drone_type === 'treatment' ? '💧' : '🛰';
+
+    document.getElementById('hudMode').textContent = data.mode || 'AUTO';
+    document.getElementById('hudAlt').textContent = (data.alt || 0).toFixed(1);
+    document.getElementById('hudSpeed').textContent = (data.groundspeed || 0).toFixed(1);
+    document.getElementById('hudHeading').textContent = Math.round(data.heading || 0);
+    document.getElementById('hudBattery').textContent = Math.round(data.battery || 0);
+
+    // Battery bar
+    const batFill = document.getElementById('batteryFill');
+    const batPct = data.battery || 0;
+    batFill.style.width = batPct + '%';
+    batFill.classList.remove('low', 'critical');
+    if (batPct < 20) batFill.classList.add('critical');
+    else if (batPct < 40) batFill.classList.add('low');
+
+    // Progress
+    const pct = Math.round((data.progress || 0) * 100);
+    document.getElementById('hudProgress').textContent = pct + '%';
+    document.getElementById('progressFill').style.width = pct + '%';
+
+    // Drone position on map
+    if (data.lat && data.lon) {
+        updateDroneMarker(data.lat, data.lon, data.heading, data.drone_type);
+
+        // Header status dot
+        if (data.drone_type === 'scout') {
+            document.getElementById('scoutDot').classList.remove('offline');
+        } else {
+            document.getElementById('treatDot').classList.remove('offline');
+        }
+
+        // Auto-refresh detections/zones periodically while flying
+        if (Math.random() < 0.05) loadStats();
+    }
+}
+
+// ══════════════════════════════════════════
+// DRONE MARKER & TRAIL
+// ══════════════════════════════════════════
+
+function updateDroneMarker(lat, lon, heading, type) {
+    const droneClass = type === 'spray' || type === 'treatment' ? 'drone-marker treatment' : 'drone-marker';
+    const icon = type === 'spray' || type === 'treatment' ? '💧' : '✈';
+
+    if (!droneMarker) {
+        const html = `<div class="${droneClass}" style="transform: rotate(${heading || 0}deg);">${icon}</div>`;
+        const divIcon = L.divIcon({
+            html: html,
+            className: 'drone-marker-wrapper',
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
+        });
+        droneMarker = L.marker([lat, lon], { icon: divIcon, zIndexOffset: 1000 }).addTo(map);
+    } else {
+        droneMarker.setLatLng([lat, lon]);
+        const el = droneMarker.getElement();
+        if (el) {
+            const inner = el.querySelector('.drone-marker');
+            if (inner) {
+                inner.className = droneClass;
+                inner.style.transform = `rotate(${heading || 0}deg)`;
+                inner.textContent = icon;
+            }
+        }
+    }
+
+    // Trail
+    droneTrailPoints.push([lat, lon]);
+    if (droneTrailPoints.length > 200) droneTrailPoints.shift();
+
+    if (!droneTrail) {
+        droneTrail = L.polyline(droneTrailPoints, {
+            color: '#06b6d4', weight: 2, opacity: 0.7, dashArray: '4 4',
+        });
+        if (document.getElementById('toggleTrail').checked) droneTrail.addTo(map);
+    } else {
+        droneTrail.setLatLngs(droneTrailPoints);
+    }
+
+    if (followingDrone) {
+        map.panTo([lat, lon], { animate: true, duration: 0.4 });
+    }
+}
+
+function followDrone() {
+    followingDrone = !followingDrone;
+    const btn = document.getElementById('followBtn');
+    btn.classList.toggle('btn-primary', followingDrone);
+    if (followingDrone && droneMarker) {
+        map.flyTo(droneMarker.getLatLng(), 17, { duration: 0.6 });
+        toast('Following drone', 'info');
+    } else {
+        toast('Stopped following', 'info');
+    }
+}
+
+function clearTrail() {
+    droneTrailPoints = [];
+    if (droneTrail) {
+        droneTrail.setLatLngs([]);
+    }
+    toast('Trail cleared', 'info');
+}
+
+// ══════════════════════════════════════════
+// DATA LOADING
+// ══════════════════════════════════════════
+
 async function loadAllData() {
     await Promise.all([
         loadStats(),
@@ -142,6 +384,7 @@ async function loadAllData() {
         loadSprayZones(),
         loadTreatments(),
         loadHealth(),
+        loadMissionHistory(),
     ]);
 }
 
@@ -153,14 +396,14 @@ async function loadStats() {
         animateValue('statDetections', stats.total_detections || 0);
         animateValue('statPending', stats.pending_zones || 0);
 
-        // Update legend counts
         const dist = stats.disease_distribution || {};
         Object.keys(DISEASE_COLORS).forEach(d => {
             const el = document.getElementById(`legend-count-${d}`);
             if (el) el.textContent = dist[d] || 0;
         });
 
-        // Health bar
+        renderDistChart(dist);
+
         const healthFill = document.getElementById('healthFill');
         const healthValue = document.getElementById('healthValue');
         if (stats.avg_health != null) {
@@ -170,68 +413,99 @@ async function loadStats() {
             healthValue.textContent = pct + '%';
         }
     } catch(e) {
-        console.error('Failed to load stats:', e);
+        console.error('loadStats:', e);
     }
+}
+
+function renderDistChart(dist) {
+    const container = document.getElementById('distChart');
+    const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
+    const order = ['leaf_blight', 'leaf_spot', 'rust', 'powdery_mildew', 'healthy'];
+    container.innerHTML = order.map(d => {
+        const count = dist[d] || 0;
+        const pct = (count / total) * 100;
+        return `
+            <div class="dist-row">
+                <div class="dist-label">${DISEASE_LABELS[d]}</div>
+                <div class="dist-bar">
+                    <div class="dist-bar-fill" style="width: ${pct}%; background: ${DISEASE_COLORS[d]};"></div>
+                </div>
+                <div class="dist-count">${count}</div>
+            </div>
+        `;
+    }).join('');
 }
 
 async function loadDetections() {
     try {
-        const data = await fetch(`${API}/detections`).then(r => r.json());
-        detectionMarkers.clearLayers();
-        const container = document.getElementById('detectionList');
-        container.innerHTML = '';
+        allDetections = await fetch(`${API}/detections`).then(r => r.json());
+        renderDetections();
+    } catch(e) {
+        console.error('loadDetections:', e);
+    }
+}
 
-        if (data.length === 0) {
-            container.innerHTML = `<div class="empty-state"><p>No detections yet.<br>Run a scan mission to start.</p></div>`;
-            return;
+function renderDetections() {
+    detectionMarkers.clearLayers();
+    const container = document.getElementById('detectionList');
+    container.innerHTML = '';
+
+    const search = (document.getElementById('detSearch')?.value || '').toLowerCase();
+    const filterDisease = document.getElementById('detFilterDisease')?.value || '';
+
+    let filtered = allDetections;
+    if (filterDisease) filtered = filtered.filter(d => d.class_name === filterDisease);
+    if (search) filtered = filtered.filter(d =>
+        (d.class_name || '').toLowerCase().includes(search) ||
+        (`${d.lat || ''} ${d.lon || ''}`).includes(search)
+    );
+
+    if (filtered.length === 0) {
+        container.innerHTML = `<div class="empty-state"><p>No detections match.</p></div>`;
+        return;
+    }
+
+    filtered.forEach((det, i) => {
+        if (det.lat && det.lon) {
+            const color = DISEASE_COLORS[det.class_name] || '#64748b';
+            const marker = L.circleMarker([det.lat, det.lon], {
+                radius: 6 + det.confidence * 4,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.6,
+                weight: 1.5,
+            }).bindPopup(`
+                <strong>${DISEASE_LABELS[det.class_name] || det.class_name}</strong><br>
+                Confidence: ${(det.confidence * 100).toFixed(1)}%<br>
+                <small>${det.lat.toFixed(5)}, ${det.lon.toFixed(5)}</small>
+            `);
+            detectionMarkers.addLayer(marker);
         }
 
-        data.forEach((det, i) => {
-            // Map marker
-            if (det.lat && det.lon) {
-                const color = DISEASE_COLORS[det.class_name] || '#64748b';
-                const marker = L.circleMarker([det.lat, det.lon], {
-                    radius: 6 + det.confidence * 4,
-                    color: color,
-                    fillColor: color,
-                    fillOpacity: 0.6,
-                    weight: 1.5,
-                }).bindPopup(`
-                    <strong>${DISEASE_LABELS[det.class_name] || det.class_name}</strong><br>
-                    Confidence: ${(det.confidence * 100).toFixed(1)}%<br>
-                    <small>${det.lat.toFixed(5)}, ${det.lon.toFixed(5)}</small>
-                `);
-                detectionMarkers.addLayer(marker);
-            }
-
-            // Card
-            const confClass = det.confidence > 0.8 ? 'high' : det.confidence > 0.6 ? 'medium' : 'low';
-            const card = document.createElement('div');
-            card.className = 'detection-card';
-            card.style.animationDelay = `${i * 0.03}s`;
-            card.innerHTML = `
-                <div class="detection-header">
-                    <div class="detection-disease">
-                        <span class="legend-dot ${det.class_name}"></span>
-                        ${DISEASE_LABELS[det.class_name] || det.class_name}
-                    </div>
-                    <span class="detection-conf ${confClass}">${(det.confidence * 100).toFixed(1)}%</span>
+        const confClass = det.confidence > 0.8 ? 'high' : det.confidence > 0.6 ? 'medium' : 'low';
+        const card = document.createElement('div');
+        card.className = 'detection-card';
+        card.style.animationDelay = `${Math.min(i, 20) * 0.02}s`;
+        card.innerHTML = `
+            <div class="detection-header">
+                <div class="detection-disease">
+                    <span class="legend-dot ${det.class_name}"></span>
+                    ${DISEASE_LABELS[det.class_name] || det.class_name}
                 </div>
-                <div class="detection-meta">
-                    ${det.lat ? `<span>${det.lat.toFixed(4)}, ${det.lon.toFixed(4)}</span>` : ''}
-                    <span>${formatTime(det.detected_at)}</span>
-                </div>
-            `;
-            if (det.lat && det.lon) {
-                card.addEventListener('click', () => {
-                    map.flyTo([det.lat, det.lon], 17, { duration: 0.8 });
-                });
-            }
-            container.appendChild(card);
-        });
-    } catch(e) {
-        console.error('Failed to load detections:', e);
-    }
+                <span class="detection-conf ${confClass}">${(det.confidence * 100).toFixed(1)}%</span>
+            </div>
+            <div class="detection-meta">
+                ${det.lat ? `<span>${det.lat.toFixed(4)}, ${det.lon.toFixed(4)}</span>` : ''}
+                <span>${formatTime(det.detected_at)}</span>
+            </div>
+        `;
+        if (det.lat && det.lon) {
+            card.addEventListener('click', () => {
+                map.flyTo([det.lat, det.lon], 17, { duration: 0.8 });
+            });
+        }
+        container.appendChild(card);
+    });
 }
 
 async function loadSprayZones() {
@@ -246,17 +520,13 @@ async function loadSprayZones() {
             return;
         }
 
-        data.forEach((zone, i) => {
+        data.forEach((zone) => {
             const color = DISEASE_COLORS[zone.disease_type] || '#64748b';
 
-            // Draw polygon on map
             if (zone.geometry) {
                 const geo = typeof zone.geometry === 'string' ? JSON.parse(zone.geometry) : zone.geometry;
                 const polygon = L.polygon(geo, {
-                    color: color,
-                    fillColor: color,
-                    fillOpacity: 0.2,
-                    weight: 2,
+                    color: color, fillColor: color, fillOpacity: 0.2, weight: 2,
                     dashArray: zone.status === 'pending' ? '6 4' : null,
                 }).bindPopup(`
                     <strong>Spray Zone #${zone.id}</strong><br>
@@ -267,7 +537,6 @@ async function loadSprayZones() {
                 sprayZoneLayer.addLayer(polygon);
             }
 
-            // Card
             const card = document.createElement('div');
             card.className = 'zone-card';
             card.innerHTML = `
@@ -283,14 +552,8 @@ async function loadSprayZones() {
                 </div>
                 ${zone.status === 'pending' ? `
                 <div class="zone-actions">
-                    <button class="btn btn-success btn-sm" onclick="approveZone(${zone.id})">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                        Approve
-                    </button>
-                    <button class="btn btn-danger btn-sm" onclick="rejectZone(${zone.id})">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        Reject
-                    </button>
+                    <button class="btn btn-success btn-sm" onclick="approveZone(${zone.id})">Approve</button>
+                    <button class="btn btn-danger btn-sm" onclick="rejectZone(${zone.id})">Reject</button>
                 </div>` : ''}
             `;
             if (zone.center_lat && zone.center_lon) {
@@ -302,7 +565,7 @@ async function loadSprayZones() {
             container.appendChild(card);
         });
     } catch(e) {
-        console.error('Failed to load spray zones:', e);
+        console.error('loadSprayZones:', e);
     }
 }
 
@@ -334,7 +597,7 @@ async function loadTreatments() {
             container.appendChild(card);
         });
     } catch(e) {
-        console.error('Failed to load treatments:', e);
+        console.error('loadTreatments:', e);
     }
 }
 
@@ -343,49 +606,497 @@ async function loadHealth() {
         const data = await fetch(`${API}/health`).then(r => r.json());
         if (data.length === 0) return;
 
-        // Remove existing heat layer
         if (healthHeatLayer) map.removeLayer(healthHeatLayer);
 
-        // Build heatmap data: invert health score so disease areas are "hot"
         const points = data.map(p => [p.lat, p.lon, 1 - p.health_score]);
 
         healthHeatLayer = L.heatLayer(points, {
-            radius: 30,
-            blur: 20,
-            maxZoom: 18,
-            max: 1.0,
-            gradient: {
-                0.0: '#10b981',
-                0.3: '#84cc16',
-                0.5: '#f59e0b',
-                0.7: '#ef4444',
-                1.0: '#dc2626',
-            },
+            radius: 30, blur: 20, maxZoom: 18, max: 1.0,
+            gradient: { 0.0: '#10b981', 0.3: '#84cc16', 0.5: '#f59e0b', 0.7: '#ef4444', 1.0: '#dc2626' },
         });
+
+        if (document.getElementById('toggleHeatmap').checked) {
+            healthHeatLayer.addTo(map);
+        }
     } catch(e) {
-        console.error('Failed to load health:', e);
+        console.error('loadHealth:', e);
     }
 }
 
-// ── Actions ──
+// ══════════════════════════════════════════
+// MISSION HISTORY
+// ══════════════════════════════════════════
 
-async function startScanMission() {
-    let scanArea = null;
-    if (drawnItems.getLayers().length > 0) {
-        scanArea = [];
-        drawnItems.getLayers()[0].getLatLngs()[0].forEach(ll => {
-            scanArea.push([ll.lat, ll.lng]);
+async function loadMissionHistory() {
+    try {
+        const type = document.getElementById('missionFilterType').value;
+        const status = document.getElementById('missionFilterStatus').value;
+        let url = `${API}/missions/summary`;
+        const params = [];
+        if (type) params.push(`mission_type=${type}`);
+        if (status) params.push(`status=${status}`);
+        if (params.length) url += '?' + params.join('&');
+
+        const data = await fetch(url).then(r => r.json());
+        const container = document.getElementById('missionList');
+        container.innerHTML = '';
+
+        if (data.length === 0) {
+            container.innerHTML = `<div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                </svg>
+                <p>No missions match.<br>Create one to start.</p>
+            </div>`;
+            return;
+        }
+
+        data.forEach((m, i) => {
+            const isSpray = m.type === 'spray';
+            const iconHtml = isSpray
+                ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 0l-3-3m3 3l3-3"/><circle cx="12" cy="14" r="6"/></svg>`
+                : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>`;
+
+            const card = document.createElement('div');
+            card.className = 'mission-card';
+            card.style.animationDelay = `${Math.min(i, 20) * 0.03}s`;
+            card.innerHTML = `
+                <div class="mission-card-header">
+                    <div class="mission-card-id">
+                        <div class="mission-icon ${isSpray ? 'spray' : ''}">${iconHtml}</div>
+                        Mission #${m.id} · ${m.type}
+                    </div>
+                    <span class="badge badge-${m.status}">${m.status.replace('_', ' ')}</span>
+                </div>
+                <div class="mission-card-meta">
+                    <span class="pill">${m.detection_count || 0} dets</span>
+                    <span class="pill">${m.zone_count || 0} zones</span>
+                    <span class="pill">${m.treatment_count || 0} sprays</span>
+                    <span style="margin-left:auto;">${formatTime(m.created_at)}</span>
+                </div>
+            `;
+            card.addEventListener('click', () => openMissionDetail(m.id));
+            container.appendChild(card);
         });
+    } catch(e) {
+        console.error('loadMissionHistory:', e);
     }
+}
 
-    const res = await fetch(`${API}/missions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'scan', scan_area: scanArea }),
-    }).then(r => r.json());
+// ══════════════════════════════════════════
+// MISSION WIZARD
+// ══════════════════════════════════════════
 
-    toast(`Scan mission #${res.id} created`, 'success');
-    loadStats();
+function openWizard() {
+    wizard.step = 1;
+    wizard.polygon = null;
+    wizard.waypoints = null;
+    wizard.stats = null;
+    wizard.missionId = null;
+    document.getElementById('wizardAreaStatus').textContent = 'No area drawn yet.';
+    document.getElementById('wizardAreaStatus').classList.remove('success');
+    document.getElementById('wizardModal').classList.add('visible');
+    updateWizardStep();
+}
+
+function closeWizard() {
+    document.getElementById('wizardModal').classList.remove('visible');
+    setMapMode('view');
+}
+
+function updateWizardStep() {
+    document.querySelectorAll('.wizard-step').forEach(s => {
+        const step = parseInt(s.dataset.step);
+        s.classList.toggle('active', step === wizard.step);
+        s.classList.toggle('done', step < wizard.step);
+    });
+    document.querySelectorAll('.wizard-pane').forEach(p => {
+        p.classList.toggle('active', parseInt(p.dataset.pane) === wizard.step);
+    });
+    document.getElementById('wzPrevBtn').style.visibility = wizard.step > 1 ? 'visible' : 'hidden';
+    document.getElementById('wzNextBtn').style.display = wizard.step < 4 ? '' : 'none';
+}
+
+function wizardPrev() {
+    if (wizard.step > 1) {
+        wizard.step--;
+        updateWizardStep();
+    }
+}
+
+async function wizardNext() {
+    if (wizard.step === 1 && !wizard.polygon) {
+        toast('Draw an area first', 'error');
+        return;
+    }
+    if (wizard.step === 2) {
+        // Generate preview
+        await wizardGeneratePreview();
+    }
+    wizard.step++;
+    updateWizardStep();
+}
+
+function wizardStartDraw() {
+    // Hide wizard temporarily, switch to draw mode
+    document.getElementById('wizardModal').classList.remove('visible');
+    setMapMode('wizard-draw');
+    drawnItems.clearLayers();
+    // Auto-trigger polygon draw
+    setTimeout(() => {
+        const polygonBtn = document.querySelector('.leaflet-draw-draw-polygon');
+        if (polygonBtn) polygonBtn.click();
+    }, 200);
+}
+
+function captureWizardArea(layer) {
+    const latlngs = layer.getLatLngs()[0];
+    wizard.polygon = latlngs.map(ll => [ll.lat, ll.lng]);
+    document.getElementById('wizardAreaStatus').textContent =
+        `Area captured · ${wizard.polygon.length} vertices`;
+    document.getElementById('wizardAreaStatus').classList.add('success');
+    // Reopen wizard
+    setTimeout(() => {
+        document.getElementById('wizardModal').classList.add('visible');
+    }, 300);
+}
+
+async function wizardGeneratePreview() {
+    const altitude = parseFloat(document.getElementById('wzAltitude').value);
+    const overlap = parseFloat(document.getElementById('wzOverlap').value) / 100;
+    const speed = parseFloat(document.getElementById('wzSpeed').value);
+    const hfov = parseFloat(document.getElementById('wzHfov').value);
+
+    try {
+        const res = await fetch(`${API}/plan/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                polygon: wizard.polygon,
+                altitude, overlap,
+                flight_speed: speed,
+                camera_hfov_deg: hfov,
+                save: false,
+            }),
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            toast('Plan failed: ' + (err.detail || res.statusText), 'error');
+            return;
+        }
+
+        const data = await res.json();
+        wizard.waypoints = data.waypoints;
+        wizard.stats = data.stats;
+
+        // Render preview stats
+        const statsHtml = `
+            <div class="preview-stat">
+                <div class="preview-stat-label">Waypoints</div>
+                <div class="preview-stat-value">${data.waypoint_count}</div>
+            </div>
+            <div class="preview-stat">
+                <div class="preview-stat-label">Distance</div>
+                <div class="preview-stat-value">${data.stats.total_distance_m}<span class="preview-stat-unit">m</span></div>
+            </div>
+            <div class="preview-stat">
+                <div class="preview-stat-label">Duration</div>
+                <div class="preview-stat-value">${data.stats.estimated_duration_str}</div>
+            </div>
+            <div class="preview-stat">
+                <div class="preview-stat-label">Est. Images</div>
+                <div class="preview-stat-value">${data.stats.estimated_images}</div>
+            </div>
+            <div class="preview-stat">
+                <div class="preview-stat-label">Altitude</div>
+                <div class="preview-stat-value">${data.stats.altitude}<span class="preview-stat-unit">m</span></div>
+            </div>
+            <div class="preview-stat">
+                <div class="preview-stat-label">Footprint</div>
+                <div class="preview-stat-value">${data.stats.ground_footprint_m[0]}<span class="preview-stat-unit">×${data.stats.ground_footprint_m[1]} m</span></div>
+            </div>
+        `;
+        document.getElementById('previewStats').innerHTML = statsHtml;
+
+        // Draw flight path on map
+        renderFlightPath(data.waypoints);
+    } catch(e) {
+        console.error(e);
+        toast('Plan request failed', 'error');
+    }
+}
+
+function renderFlightPath(waypoints) {
+    flightPathLayer.clearLayers();
+    const navWps = waypoints.filter(wp => wp.command === 16);   // NAV_WAYPOINT
+    const path = navWps.map(wp => [wp.x, wp.y]);
+    if (path.length < 2) return;
+
+    const polyline = L.polyline(path, {
+        color: '#3b82f6', weight: 3, opacity: 0.85,
+        className: 'flight-path',
+    });
+    flightPathLayer.addLayer(polyline);
+
+    // Start/end markers
+    const start = L.circleMarker(path[0], {
+        radius: 6, color: '#10b981', fillColor: '#10b981', fillOpacity: 1, weight: 2,
+    }).bindPopup('<strong>Start</strong>');
+    const end = L.circleMarker(path[path.length - 1], {
+        radius: 6, color: '#ef4444', fillColor: '#ef4444', fillOpacity: 1, weight: 2,
+    }).bindPopup('<strong>End</strong>');
+    flightPathLayer.addLayer(start);
+    flightPathLayer.addLayer(end);
+
+    map.fitBounds(L.latLngBounds(path), { padding: [60, 60] });
+}
+
+async function wizardLaunch(mode) {
+    const altitude = parseFloat(document.getElementById('wzAltitude').value);
+    const overlap = parseFloat(document.getElementById('wzOverlap').value) / 100;
+    const speed = parseFloat(document.getElementById('wzSpeed').value);
+    const hfov = parseFloat(document.getElementById('wzHfov').value);
+
+    try {
+        // Save the mission
+        const res = await fetch(`${API}/plan/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                polygon: wizard.polygon,
+                altitude, overlap,
+                flight_speed: speed,
+                camera_hfov_deg: hfov,
+                save: true,
+                notes: `Created via wizard @ ${new Date().toLocaleString()}`,
+            }),
+        });
+        const data = await res.json();
+        wizard.missionId = data.mission_id;
+
+        toast(`Mission #${data.mission_id} created`, 'success');
+
+        if (mode === 'simulate') {
+            // Trigger simulation
+            await fetch(`${API}/missions/${data.mission_id}/simulate`, { method: 'POST' });
+            toast('Simulation started — watch the HUD', 'success');
+            followingDrone = true;
+        }
+
+        closeWizard();
+        loadStats();
+        loadMissionHistory();
+    } catch(e) {
+        console.error(e);
+        toast('Launch failed', 'error');
+    }
+}
+
+// ══════════════════════════════════════════
+// MISSION DETAIL MODAL
+// ══════════════════════════════════════════
+
+async function openMissionDetail(missionId) {
+    document.getElementById('missionModal').classList.add('visible');
+    document.getElementById('mdTitle').textContent = `Mission #${missionId}`;
+    document.getElementById('mdBody').innerHTML = '<div class="empty-state"><div class="spinner"></div><p>Loading...</p></div>';
+
+    try {
+        const m = await fetch(`${API}/missions/${missionId}/full`).then(r => r.json());
+        currentMissionDetail = m;
+
+        document.getElementById('mdTitle').textContent = `Mission #${m.id} · ${m.type}`;
+
+        const sumDetections = (m.detections || []).length;
+        const sumZones = (m.spray_zones || []).length;
+        const sumTreats = (m.treatments || []).length;
+        const wps = m.waypoints ? JSON.parse(m.waypoints) : [];
+
+        const html = `
+            <div class="detail-grid">
+                <div class="detail-stat">
+                    <div class="detail-stat-value">${m.status.replace('_', ' ')}</div>
+                    <div class="detail-stat-label">Status</div>
+                </div>
+                <div class="detail-stat">
+                    <div class="detail-stat-value">${wps.length}</div>
+                    <div class="detail-stat-label">Waypoints</div>
+                </div>
+                <div class="detail-stat">
+                    <div class="detail-stat-value">${sumDetections}</div>
+                    <div class="detail-stat-label">Detections</div>
+                </div>
+                <div class="detail-stat">
+                    <div class="detail-stat-value">${sumZones}</div>
+                    <div class="detail-stat-label">Spray Zones</div>
+                </div>
+                <div class="detail-stat">
+                    <div class="detail-stat-value">${sumTreats}</div>
+                    <div class="detail-stat-label">Treatments</div>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <div class="detail-section-title">Timeline</div>
+                <div class="detail-list">
+                    <div class="detail-list-item"><span>Created</span><span>${formatTime(m.created_at)}</span></div>
+                    ${m.started_at ? `<div class="detail-list-item"><span>Started</span><span>${formatTime(m.started_at)}</span></div>` : ''}
+                    ${m.completed_at ? `<div class="detail-list-item"><span>Completed</span><span>${formatTime(m.completed_at)}</span></div>` : ''}
+                </div>
+            </div>
+
+            ${m.notes ? `
+            <div class="detail-section">
+                <div class="detail-section-title">Notes</div>
+                <p style="font-size:13px;color:var(--text-secondary);">${m.notes}</p>
+            </div>` : ''}
+
+            ${sumDetections > 0 ? `
+            <div class="detail-section">
+                <div class="detail-section-title">Detection Breakdown</div>
+                <div class="detail-list">
+                    ${detectionBreakdownHtml(m.detections)}
+                </div>
+            </div>` : ''}
+
+            ${sumZones > 0 ? `
+            <div class="detail-section">
+                <div class="detail-section-title">Spray Zones</div>
+                <div class="detail-list">
+                    ${m.spray_zones.map(z => `
+                        <div class="detail-list-item">
+                            <span>
+                                <span class="legend-dot ${z.disease_type}"></span>
+                                ${DISEASE_LABELS[z.disease_type] || z.disease_type}
+                            </span>
+                            <span>
+                                <span class="badge badge-${z.status}">${z.status}</span>
+                                ${(z.severity * 100).toFixed(0)}%
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>` : ''}
+        `;
+
+        document.getElementById('mdBody').innerHTML = html;
+
+        // Show flight path on map if waypoints exist
+        if (wps.length > 0) {
+            renderFlightPath(wps);
+        }
+
+        // Highlight scan area
+        if (m.scan_area) {
+            try {
+                const area = JSON.parse(m.scan_area);
+                scanAreaLayer.clearLayers();
+                const poly = L.polygon(area, {
+                    color: '#06b6d4', fillColor: '#06b6d420', weight: 2, dashArray: '4 4',
+                });
+                scanAreaLayer.addLayer(poly);
+            } catch(e) {}
+        }
+
+        // Toggle simulate button
+        document.getElementById('mdSimBtn').style.display = wps.length > 0 ? '' : 'none';
+    } catch(e) {
+        console.error(e);
+        document.getElementById('mdBody').innerHTML = '<div class="empty-state"><p>Failed to load mission.</p></div>';
+    }
+}
+
+function detectionBreakdownHtml(detections) {
+    const counts = {};
+    detections.forEach(d => { counts[d.class_name] = (counts[d.class_name] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([d, c]) => `
+        <div class="detail-list-item">
+            <span><span class="legend-dot ${d}"></span> ${DISEASE_LABELS[d] || d}</span>
+            <span>${c}</span>
+        </div>
+    `).join('');
+}
+
+function closeMissionDetail() {
+    document.getElementById('missionModal').classList.remove('visible');
+    currentMissionDetail = null;
+}
+
+async function simulateCurrentMission() {
+    if (!currentMissionDetail) return;
+    try {
+        await fetch(`${API}/missions/${currentMissionDetail.id}/simulate`, { method: 'POST' });
+        toast(`Simulating mission #${currentMissionDetail.id}`, 'success');
+        followingDrone = true;
+        closeMissionDetail();
+    } catch(e) {
+        toast('Simulation failed', 'error');
+    }
+}
+
+function exportMissionPlan() {
+    if (!currentMissionDetail || !currentMissionDetail.waypoints) {
+        toast('No waypoints to export', 'error');
+        return;
+    }
+    const wps = JSON.parse(currentMissionDetail.waypoints);
+
+    // Build a minimal QGC plan structure
+    const plan = {
+        fileType: 'Plan',
+        version: 1,
+        groundStation: 'DiseaseDrone',
+        mission: {
+            cruiseSpeed: 2,
+            hoverSpeed: 1,
+            items: wps.map((wp, i) => ({
+                autoContinue: true,
+                command: wp.command,
+                doJumpId: i + 1,
+                frame: wp.frame,
+                params: [wp.param1, wp.param2, wp.param3, wp.param4, wp.x, wp.y, wp.z],
+                type: 'SimpleItem',
+            })),
+            plannedHomePosition: { lat: wps[0].x, lon: wps[0].y, alt: 0 },
+        },
+    };
+
+    const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mission_${currentMissionDetail.id}.plan`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('QGC plan downloaded', 'success');
+}
+
+// ══════════════════════════════════════════
+// ACTIONS
+// ══════════════════════════════════════════
+
+async function planSpray() {
+    try {
+        const res = await fetch(`${API}/plan/spray`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ save: true, altitude: 3.0, hover_time: 5.0 }),
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            toast(err.detail || 'No approved zones', 'error');
+            return;
+        }
+        const data = await res.json();
+        toast(`Spray mission #${data.mission_id} planned (${data.stats.zone_count} zones, ${data.stats.estimated_duration_str})`, 'success');
+        renderFlightPath(data.waypoints);
+        loadStats();
+        loadMissionHistory();
+    } catch(e) {
+        console.error(e);
+        toast('Spray planning failed', 'error');
+    }
 }
 
 async function approveZone(zoneId) {
@@ -413,13 +1124,9 @@ async function rejectZone(zoneId) {
 async function seedDemoData() {
     toast('Seeding demo data...', 'info');
     await fetch(`${API}/demo/seed`, { method: 'POST' });
-    toast('Demo data loaded!', 'success');
+    toast('Demo data loaded', 'success');
     await loadAllData();
-
-    // Fly to demo area
-    setTimeout(() => {
-        map.flyTo([12.9716, 77.5946], 15, { duration: 1.2 });
-    }, 300);
+    setTimeout(() => map.flyTo([12.9716, 77.5946], 15, { duration: 1.2 }), 300);
 }
 
 async function clearAllData() {
@@ -428,33 +1135,30 @@ async function clearAllData() {
     toast('All data cleared', 'info');
     detectionMarkers.clearLayers();
     sprayZoneLayer.clearLayers();
+    flightPathLayer.clearLayers();
+    scanAreaLayer.clearLayers();
     if (healthHeatLayer) { map.removeLayer(healthHeatLayer); healthHeatLayer = null; }
+    if (droneMarker) { map.removeLayer(droneMarker); droneMarker = null; }
+    if (droneTrail) { map.removeLayer(droneTrail); droneTrail = null; }
+    droneTrailPoints = [];
     drawnItems.clearLayers();
+    document.getElementById('telemetryHud').classList.remove('visible');
     await loadAllData();
 }
 
-function toggleHeatmap() {
-    if (!healthHeatLayer) {
-        toast('No health data available', 'info');
-        return;
-    }
-    if (map.hasLayer(healthHeatLayer)) {
-        map.removeLayer(healthHeatLayer);
-        toast('Heatmap hidden', 'info');
-    } else {
-        healthHeatLayer.addTo(map);
-        toast('Health heatmap enabled', 'success');
-    }
-}
-
 function centerMap() {
-    // Try to center on detection markers
     if (detectionMarkers.getLayers().length > 0) {
         map.fitBounds(detectionMarkers.getBounds(), { padding: [40, 40], maxZoom: 16 });
+    } else if (drawnItems.getLayers().length > 0) {
+        map.fitBounds(drawnItems.getBounds(), { padding: [60, 60] });
+    } else {
+        map.flyTo([12.9716, 77.5946], 15, { duration: 0.6 });
     }
 }
 
-// ── Utilities ──
+// ══════════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════════
 
 function formatTime(ts) {
     if (!ts) return '';
@@ -492,3 +1196,11 @@ function toast(message, type = 'info') {
     container.appendChild(el);
     setTimeout(() => el.remove(), 3000);
 }
+
+// Allow ESC to close modals
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeWizard();
+        closeMissionDetail();
+    }
+});

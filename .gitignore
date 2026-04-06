@@ -42,6 +42,7 @@ wandb/
 
 # Database
 *.db
+/dashboard/disease_drone.db
 
 # QGroundControl plans (generated)
 *.plan
