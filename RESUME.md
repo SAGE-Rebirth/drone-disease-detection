@@ -1,6 +1,6 @@
 # Disease Drone — Resume Point
 
-**Last session:** 2026-04-03
+**Last session:** 2026-04-06
 
 ---
 
@@ -9,13 +9,14 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Architecture | Done | `architecture.md` — full system design |
-| ML Pipeline | Scripts done, training pending | All code written, data preprocessed, needs GPU to train. Auto device detection added (MPS/CUDA/CPU). |
-| Dashboard | Done (v1) | FastAPI + Leaflet.js, dark theme, working with demo data |
+| ML Pipeline | Scripts done, training pending | All code written, data preprocessed, needs GPU to train. Auto device detection (MPS/CUDA/CPU). 2-phase training KeyError fix applied. |
+| Dashboard v0.2 | Done | Full mission lifecycle UI with wizard, history, telemetry HUD, WebSocket, drone tracking, mission detail, drone connect modal |
 | Decision Engine | Done | `engine/decision.py` — pixel→GPS, DBSCAN clustering, convex hull spray zones, severity scoring |
-| Mission Planner | Done | `engine/planner.py` — lawnmower waypoints, nearest-neighbour TSP, MAVLink + QGC export |
-| Drone Comms | Done | `drone/comms.py` — pymavlink DroneLink class, mission upload, telemetry, camera/spray control |
+| Mission Planner | Done | `engine/planner.py` — lawnmower, TSP, MAVLink + QGC export, `mission_stats()` helper |
+| Drone Comms | Done & Wired | `drone/comms.py` — pymavlink DroneLink class. **Now wired into dashboard via `DroneController`** |
 | Image Ingestion | Done | `engine/ingest.py` — EXIF GPS extraction, ML inference hookup, folder watcher |
-| Base Station Server | Done | `engine/base_station.py` — full orchestrator tying all components together |
+| Base Station Server | Done | `engine/base_station.py` — orchestrator tying all components together |
+| Telemetry Simulator | Done | `dashboard/app.py:TelemetrySimulator` — walks waypoint paths, no drone needed for demos |
 
 ---
 
@@ -152,11 +153,41 @@ drone/
 
 ---
 
+## Dashboard v0.2 — Built 2026-04-06
+
+### Backend (`dashboard/app.py`)
+- **Telemetry Simulator** — walks waypoint paths with realistic position interpolation, heading, battery drain
+- **DroneController** — unified abstraction over real DroneLink and the simulator; selects backend at runtime
+- **WebSocket** `/ws/telemetry` — live broadcast loop ticking at 2 Hz, pushes telemetry + mission events
+- **Mission planning endpoints** — `/api/plan/scan`, `/api/plan/spray` return waypoints + stats (distance, duration, image count, footprint) using `mission_stats()` helper
+- **Mission execution** — `/api/missions/{id}/simulate` (sim) and `/api/missions/{id}/upload` + `/launch` (real drone)
+- **Drone connection** — `/api/drone/connect`, `/api/drone/disconnect/{type}`, `/api/drone/status` for live MAVLink hookup
+- **Mission history** — `/api/missions/summary` with aggregated detection/zone/treatment counts
+- **Mission detail** — `/api/missions/{id}/full` with all related data inline
+
+### Frontend (`dashboard/static/js/app.js` + `templates/index.html` + `static/css/style.css`)
+- **Mission Wizard** — 4-step modal: draw area → configure → preview waypoints + stats → simulate/save
+- **Mission History panel** with type/status filters and aggregated count pills
+- **Mission Detail modal** with timeline, stats, detection breakdown, QGC `.plan` export
+- **Telemetry HUD** — drone type, mode, alt/speed/heading, battery bar, mission progress bar
+- **Live drone marker** with heading-rotated icon, breadcrumb trail, follow mode
+- **Drone Connect modal** accessible from header indicators (Scout / Treatment)
+- **Map layer toggles** — detections, zones, heatmap, flight path, drone trail
+- **Detection filters** — text search + disease dropdown, click legend dots to filter
+- **Disease distribution chart** in sidebar
+- **WebSocket auto-reconnect** with header indicator
+
+### New Dependencies (added 2026-04-06)
+- `websockets==16.0` — required for FastAPI WebSocket endpoint
+- `httpx==0.28.1` — used by FastAPI TestClient
+
+---
+
 ## What Needs To Be Done Next
 
 ### 1. Train the ML Model (BLOCKED — needs GPU)
 
-`train.yaml` now has `device: auto` which will auto-detect MPS on Apple Silicon:
+`train.yaml` has `device: auto` which auto-detects MPS on Apple Silicon:
 ```bash
 python ml/training/train.py --epochs 5 --batch 16
 ```
@@ -170,20 +201,38 @@ Once trained, evaluate:
 python ml/training/evaluate.py
 ```
 
-### 2. Dashboard Enhancements (later)
+### 2. End-to-End Field Test
 
-- Real-time WebSocket updates (drone telemetry, live detections)
-- Wire new engine APIs into dashboard (scan area → mission planner, approval → spray mission)
-- Mission progress tracking on map (drone position)
-- Image viewer for individual detections
-- Historical comparison (health over time)
+Now that the dashboard wires drone comms in, the next big milestone is a real flight test:
+1. Set up ArduPilot SITL (`sim_vehicle.py -v ArduCopter`)
+2. Connect via dashboard header → Scout → `udp:127.0.0.1:14550`
+3. Plan a small scan mission via wizard
+4. Click upload + launch to fly the SITL drone
+5. Drop captured images into a watch folder, run `engine/ingest.py` against them
+6. Verify spray zones populate the dashboard
+7. Approve zones, plan spray mission, fly treatment drone
+
+### 3. Image Capture → Dashboard Wiring
+
+Currently `engine/ingest.py` exists as a library. Wire it into the dashboard:
+- New endpoint `POST /api/missions/{id}/process-images` that triggers `engine/ingest.process_folder()`
+- Or use `engine/ingest.watch_folder()` in a background task tied to active missions
+- Detections should auto-flow to the database and broadcast over WebSocket
+
+### 4. Dashboard v0.3 (later)
+
+- Image viewer modal for individual detections (show source image with bbox overlay)
+- Historical health comparison (split-screen heatmaps over time)
+- Multi-drone fleet view (track scout + treatment simultaneously on map)
+- Mission scheduling (cron-like recurring scans)
+- Settings panel persisted in localStorage (default altitude, FOV, camera params)
 
 ---
 
 ## Environment
 
 - **Python:** 3.11 (venv: `drn-env/`)
-- **Key packages installed:** ultralytics, torch, opencv-python, albumentations, scikit-learn, fastapi, uvicorn, jinja2, shapely, pymavlink, exifread
+- **Key packages installed:** ultralytics, torch, opencv-python, albumentations, scikit-learn, fastapi, uvicorn, jinja2, shapely, pymavlink, exifread, websockets, httpx
 - **All dependencies installed** — no missing packages
 - **Run dashboard:** `source drn-env/bin/activate && uvicorn dashboard.app:app --reload --port 8000`
 

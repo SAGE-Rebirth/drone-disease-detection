@@ -22,6 +22,8 @@ fastapi==0.135.2
 uvicorn==0.42.0
 jinja2==3.1.6
 python-multipart==0.0.22
+websockets==16.0
+httpx==0.28.1
 
 # Decision Engine & Mission Planner
 shapely==2.1.2

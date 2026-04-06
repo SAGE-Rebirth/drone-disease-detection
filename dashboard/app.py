@@ -65,6 +65,7 @@ from engine.planner import (
     optimize_spray_path,
     to_mavlink_mission,
     mission_to_qgc_plan,
+    mission_stats,
 )
 
 
@@ -189,6 +190,122 @@ class TelemetrySimulator:
 telemetry_sim = TelemetrySimulator()
 
 
+# ── Drone Controller (real drone or simulator) ──
+
+class DroneController:
+    """Unified abstraction over the real DroneLink and the simulator.
+
+    The dashboard talks only to this object — the underlying source can be
+    switched at runtime via /api/drone/connect (real) or /api/simulator/stop
+    (sim). When no real drone is connected, the simulator is used so the
+    dashboard remains fully functional for development and demos.
+    """
+
+    def __init__(self):
+        self.scout_link = None       # DroneLink for scout
+        self.treatment_link = None   # DroneLink for treatment
+        self.scout_conn_str = None
+        self.treatment_conn_str = None
+
+    def is_real_connected(self) -> bool:
+        return self.scout_link is not None or self.treatment_link is not None
+
+    def connect_scout(self, connection_string: str):
+        from drone.comms import DroneLink
+        if self.scout_link:
+            try:
+                self.scout_link.close()
+            except Exception:
+                pass
+        link = DroneLink(connection_string)
+        link.connect(timeout=15)
+        link.request_data_stream(rate_hz=4)
+        self.scout_link = link
+        self.scout_conn_str = connection_string
+
+    def connect_treatment(self, connection_string: str):
+        from drone.comms import DroneLink
+        if self.treatment_link:
+            try:
+                self.treatment_link.close()
+            except Exception:
+                pass
+        link = DroneLink(connection_string)
+        link.connect(timeout=15)
+        link.request_data_stream(rate_hz=4)
+        self.treatment_link = link
+        self.treatment_conn_str = connection_string
+
+    def disconnect_scout(self):
+        if self.scout_link:
+            try:
+                self.scout_link.close()
+            except Exception:
+                pass
+        self.scout_link = None
+        self.scout_conn_str = None
+
+    def disconnect_treatment(self):
+        if self.treatment_link:
+            try:
+                self.treatment_link.close()
+            except Exception:
+                pass
+        self.treatment_link = None
+        self.treatment_conn_str = None
+
+    def upload_mission_to(self, drone_type: str, mission_items: list):
+        link = self.scout_link if drone_type == "scout" else self.treatment_link
+        if link is None:
+            raise RuntimeError(f"{drone_type} drone not connected")
+        link.upload_mission(mission_items)
+
+    def start_mission_on(self, drone_type: str):
+        link = self.scout_link if drone_type == "scout" else self.treatment_link
+        if link is None:
+            raise RuntimeError(f"{drone_type} drone not connected")
+        link.arm_and_start_mission()
+
+    def get_real_telemetry(self, drone_type: str = "scout") -> dict | None:
+        """Read telemetry from a real drone if connected."""
+        link = self.scout_link if drone_type == "scout" else self.treatment_link
+        if link is None:
+            return None
+        try:
+            t = link.get_telemetry()
+            return {
+                "active": t.armed,
+                "drone_type": drone_type,
+                "lat": t.lat,
+                "lon": t.lon,
+                "alt": t.alt,
+                "heading": t.heading,
+                "groundspeed": t.groundspeed,
+                "battery": t.battery_remaining if t.battery_remaining >= 0 else 100,
+                "mode": t.mode,
+                "armed": t.armed,
+                "progress": 0.0,         # not tracked from real drone
+                "waypoint_index": 0,
+                "waypoint_count": 0,
+                "source": "real",
+            }
+        except Exception as e:
+            print(f"DroneController.get_real_telemetry error: {e}")
+            return None
+
+    def status(self) -> dict:
+        return {
+            "scout_connected": self.scout_link is not None,
+            "scout_connection": self.scout_conn_str,
+            "treatment_connected": self.treatment_link is not None,
+            "treatment_connection": self.treatment_conn_str,
+            "simulator_active": telemetry_sim.active,
+        }
+
+
+drone_ctrl = DroneController()
+
+
 # ── WebSocket Connection Manager ──
 
 class WSConnectionManager:
@@ -221,16 +338,30 @@ ws_manager = WSConnectionManager()
 # ── Background Telemetry Loop ──
 
 async def telemetry_loop():
-    """Tick the telemetry simulator and broadcast updates over WebSocket."""
+    """Tick the simulator and broadcast telemetry from sim or real drones."""
     while True:
         try:
+            # Real-drone telemetry takes precedence if connected
+            if drone_ctrl.scout_link is not None:
+                snap = drone_ctrl.get_real_telemetry("scout")
+                if snap:
+                    await ws_manager.broadcast({"type": "telemetry", "data": snap})
+
+            if drone_ctrl.treatment_link is not None:
+                snap = drone_ctrl.get_real_telemetry("treatment")
+                if snap:
+                    await ws_manager.broadcast({"type": "telemetry", "data": snap})
+
+            # Simulator runs alongside (only broadcasts when active)
+            was_active = telemetry_sim.active
             telemetry_sim.step(dt=0.5)
             if telemetry_sim.active:
-                await ws_manager.broadcast({
-                    "type": "telemetry",
-                    "data": telemetry_sim.snapshot(),
-                })
-                if not telemetry_sim.active:
+                snap = telemetry_sim.snapshot()
+                snap["source"] = "simulator"
+                await ws_manager.broadcast({"type": "telemetry", "data": snap})
+            elif was_active and not telemetry_sim.active:
+                # Just transitioned to inactive — mission complete
+                if telemetry_sim.mission_id:
                     db.update_mission_status(telemetry_sim.mission_id, "completed")
                     await ws_manager.broadcast({
                         "type": "mission_complete",
@@ -354,42 +485,20 @@ async def plan_scan(body: ScanPlanRequest):
     )
     mavlink_items = to_mavlink_mission(waypoints)
 
-    # Estimate mission stats
-    total_dist_m = 0.0
-    nav_wps = [wp for wp in waypoints if wp.command == 16]  # NAV_WAYPOINT
-    for i in range(len(nav_wps) - 1):
-        a, b = nav_wps[i], nav_wps[i + 1]
-        mlat = 111_320
-        mlon = 111_320 * math.cos(math.radians(a.lat))
-        total_dist_m += math.sqrt(
-            ((b.lat - a.lat) * mlat) ** 2 + ((b.lon - a.lon) * mlon) ** 2
-        )
-
-    duration_s = total_dist_m / max(body.flight_speed, 0.1)
-
-    # Camera footprint area
-    ground_w = 2 * body.altitude * math.tan(math.radians(body.camera_hfov_deg / 2))
-    ground_h = 2 * body.altitude * math.tan(math.radians(body.camera_vfov_deg / 2))
-
-    # Estimated images (each waypoint pair captures along the row)
-    row_count = max(1, len(nav_wps) // 2)
-    row_length = total_dist_m / max(row_count, 1)
-    imgs_per_row = max(1, int(row_length / max(ground_w * (1 - body.overlap), 0.1)))
-    estimated_images = row_count * imgs_per_row
+    stats = mission_stats(
+        waypoints,
+        flight_speed=body.flight_speed,
+        altitude=body.altitude,
+        camera_hfov_deg=body.camera_hfov_deg,
+        camera_vfov_deg=body.camera_vfov_deg,
+        overlap=body.overlap,
+    )
+    stats["overlap"] = body.overlap
 
     response = {
         "waypoints": mavlink_items,
         "waypoint_count": len(mavlink_items),
-        "stats": {
-            "total_distance_m": round(total_dist_m, 1),
-            "estimated_duration_s": round(duration_s, 1),
-            "estimated_duration_str": _fmt_duration(duration_s),
-            "estimated_images": estimated_images,
-            "row_count": row_count,
-            "ground_footprint_m": [round(ground_w, 2), round(ground_h, 2)],
-            "altitude": body.altitude,
-            "overlap": body.overlap,
-        },
+        "stats": stats,
     }
 
     if body.save:
@@ -440,29 +549,18 @@ async def plan_spray(body: SprayPlanRequest):
     )
     mavlink_items = to_mavlink_mission(waypoints)
 
-    # Estimate distance + duration
-    total_dist_m = 0.0
-    for i in range(len(waypoints) - 1):
-        a, b = waypoints[i], waypoints[i + 1]
-        mlat = 111_320
-        mlon = 111_320 * math.cos(math.radians(a.lat))
-        total_dist_m += math.sqrt(
-            ((b.lat - a.lat) * mlat) ** 2 + ((b.lon - a.lon) * mlon) ** 2
-        )
-    flight_time = total_dist_m / 3.0  # assume 3 m/s
-    hover_total = len(zones) * body.hover_time
-    duration_s = flight_time + hover_total
+    stats = mission_stats(
+        waypoints,
+        flight_speed=3.0,
+        altitude=body.altitude,
+        hover_time=body.hover_time,
+    )
+    stats["zone_count"] = len(zones)
 
     response = {
         "waypoints": mavlink_items,
         "waypoint_count": len(mavlink_items),
-        "stats": {
-            "total_distance_m": round(total_dist_m, 1),
-            "zone_count": len(zones),
-            "estimated_duration_s": round(duration_s, 1),
-            "estimated_duration_str": _fmt_duration(duration_s),
-            "altitude": body.altitude,
-        },
+        "stats": stats,
     }
 
     if body.save:
@@ -617,7 +715,109 @@ async def add_health(body: HealthPoint):
 
 @app.get("/api/telemetry")
 async def get_telemetry():
-    return telemetry_sim.snapshot()
+    """Snapshot of latest telemetry — prefers real drone if connected."""
+    if drone_ctrl.scout_link is not None:
+        snap = drone_ctrl.get_real_telemetry("scout")
+        if snap:
+            return snap
+    if drone_ctrl.treatment_link is not None:
+        snap = drone_ctrl.get_real_telemetry("treatment")
+        if snap:
+            return snap
+    return {**telemetry_sim.snapshot(), "source": "simulator"}
+
+
+# ── API: Drone Connection ──
+
+class DroneConnectRequest(BaseModel):
+    drone_type: str             # 'scout' or 'treatment'
+    connection: str             # MAVLink URI: udp:..., tcp:..., /dev/ttyUSB0
+
+
+@app.post("/api/drone/connect")
+async def drone_connect(body: DroneConnectRequest):
+    """Connect to a real drone via MAVLink.
+
+    Examples of connection strings:
+        udp:127.0.0.1:14550   (SITL simulator)
+        tcp:192.168.1.10:5760 (WiFi telemetry)
+        /dev/ttyUSB0          (serial radio)
+    """
+    if body.drone_type not in ("scout", "treatment"):
+        raise HTTPException(400, "drone_type must be 'scout' or 'treatment'")
+    try:
+        if body.drone_type == "scout":
+            drone_ctrl.connect_scout(body.connection)
+        else:
+            drone_ctrl.connect_treatment(body.connection)
+        await ws_manager.broadcast({
+            "type": "drone_connected",
+            "drone_type": body.drone_type,
+            "connection": body.connection,
+        })
+        return {"status": "connected", **drone_ctrl.status()}
+    except Exception as e:
+        raise HTTPException(500, f"Connection failed: {e}")
+
+
+@app.post("/api/drone/disconnect/{drone_type}")
+async def drone_disconnect(drone_type: str):
+    if drone_type == "scout":
+        drone_ctrl.disconnect_scout()
+    elif drone_type == "treatment":
+        drone_ctrl.disconnect_treatment()
+    else:
+        raise HTTPException(400, "drone_type must be 'scout' or 'treatment'")
+    await ws_manager.broadcast({"type": "drone_disconnected", "drone_type": drone_type})
+    return {"status": "disconnected", **drone_ctrl.status()}
+
+
+@app.get("/api/drone/status")
+async def drone_status():
+    return drone_ctrl.status()
+
+
+@app.post("/api/missions/{mission_id}/upload")
+async def upload_mission_to_drone(mission_id: int):
+    """Upload a mission's waypoints to the connected real drone.
+
+    The drone is selected by mission type (scout for 'scan', treatment for 'spray').
+    """
+    mission = db.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(404, "Mission not found")
+    if not mission.get("waypoints"):
+        raise HTTPException(400, "Mission has no waypoints")
+
+    drone_type = "scout" if mission["type"] == "scan" else "treatment"
+    waypoints = json.loads(mission["waypoints"])
+
+    try:
+        drone_ctrl.upload_mission_to(drone_type, waypoints)
+        return {"status": "uploaded", "drone_type": drone_type, "items": len(waypoints)}
+    except Exception as e:
+        raise HTTPException(500, f"Upload failed: {e}")
+
+
+@app.post("/api/missions/{mission_id}/launch")
+async def launch_mission(mission_id: int):
+    """Launch a mission on the real drone (arm + AUTO mode)."""
+    mission = db.get_mission(mission_id)
+    if not mission:
+        raise HTTPException(404, "Mission not found")
+
+    drone_type = "scout" if mission["type"] == "scan" else "treatment"
+    try:
+        drone_ctrl.start_mission_on(drone_type)
+        db.update_mission_status(mission_id, "in_progress")
+        await ws_manager.broadcast({
+            "type": "mission_launched",
+            "mission_id": mission_id,
+            "drone_type": drone_type,
+        })
+        return {"status": "launched", "mission_id": mission_id}
+    except Exception as e:
+        raise HTTPException(500, f"Launch failed: {e}")
 
 
 @app.websocket("/ws/telemetry")
@@ -775,13 +975,3 @@ async def demo_full_flow():
     }
 
 
-# ── Helpers ──
-
-def _fmt_duration(seconds: float) -> str:
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    if seconds < 3600:
-        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    return f"{h}h {m}m"

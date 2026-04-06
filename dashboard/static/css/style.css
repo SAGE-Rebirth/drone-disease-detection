@@ -1484,3 +1484,32 @@ body {
     .telemetry-hud .hud-value { font-size: 16px; }
 }
 
+/* ── Drone Connect Modal Presets ── */
+.status-indicator.clickable {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background var(--transition);
+}
+
+.status-indicator.clickable:hover {
+    background: var(--bg-card);
+}
+
+.status-dot.connected {
+    background: var(--success);
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.conn-presets {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.conn-presets .btn {
+    flex: 1;
+    min-width: 100px;
+}
+

@@ -30,12 +30,12 @@
                 <span>v0.2 PoC</span>
             </div>
             <div class="header-status">
-                <div class="status-indicator">
-                    <span class="status-dot offline" id="scoutDot" title="Scout Drone"></span>
+                <div class="status-indicator clickable" onclick="openDroneConnect('scout')" title="Click to connect scout drone">
+                    <span class="status-dot offline" id="scoutDot"></span>
                     Scout
                 </div>
-                <div class="status-indicator">
-                    <span class="status-dot offline" id="treatDot" title="Treatment Drone"></span>
+                <div class="status-indicator clickable" onclick="openDroneConnect('treatment')" title="Click to connect treatment drone">
+                    <span class="status-dot offline" id="treatDot"></span>
                     Treatment
                 </div>
                 <div class="status-indicator">
@@ -410,6 +410,37 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     Simulate Flight
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Drone Connect Modal ─── -->
+    <div class="modal-backdrop" id="droneConnectModal">
+        <div class="modal modal-wizard" style="width: 460px;">
+            <div class="modal-header">
+                <h2 id="dcTitle">Connect Drone</h2>
+                <button class="modal-close" onclick="closeDroneConnect()">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="wizard-help">Enter the MAVLink connection string for the drone or autopilot.</p>
+                <div class="form-grid" style="grid-template-columns: 1fr;">
+                    <div class="form-field">
+                        <label>Connection URI</label>
+                        <input type="text" id="dcConn" placeholder="udp:127.0.0.1:14550" value="udp:127.0.0.1:14550">
+                    </div>
+                </div>
+                <div class="conn-presets">
+                    <button class="btn btn-sm" onclick="document.getElementById('dcConn').value='udp:127.0.0.1:14550'">SITL UDP</button>
+                    <button class="btn btn-sm" onclick="document.getElementById('dcConn').value='tcp:192.168.1.10:5760'">WiFi TCP</button>
+                    <button class="btn btn-sm" onclick="document.getElementById('dcConn').value='/dev/ttyUSB0'">Serial USB</button>
+                </div>
+                <div id="dcCurrentStatus" class="wizard-status" style="margin-top: 16px;">
+                    Not connected
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" onclick="droneDisconnect()" id="dcDisconnectBtn" style="display:none;">Disconnect</button>
+                <button class="btn btn-primary" onclick="droneConnect()" id="dcConnectBtn">Connect</button>
             </div>
         </div>
     </div>

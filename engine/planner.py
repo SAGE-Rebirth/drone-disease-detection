@@ -289,6 +289,87 @@ def _nearest_neighbour_tsp(
     return order
 
 
+# ── Mission Statistics ──
+
+def mission_stats(
+    waypoints: list[Waypoint],
+    flight_speed: float = 2.0,
+    altitude: float | None = None,
+    camera_hfov_deg: float = 62.2,
+    camera_vfov_deg: float = 48.8,
+    overlap: float = 0.3,
+    hover_time: float = 0.0,
+) -> dict:
+    """Compute mission statistics from a waypoint list.
+
+    Used by the dashboard to display mission previews.
+
+    Args:
+        waypoints: List of Waypoint objects (NAV_WAYPOINT items used for distance).
+        flight_speed: Cruise speed in m/s.
+        altitude: Override altitude (else taken from waypoints).
+        camera_hfov_deg: Horizontal FOV for footprint and image-count math.
+        camera_vfov_deg: Vertical FOV.
+        overlap: Image overlap fraction (0-1) for image-count estimate.
+        hover_time: Per-waypoint hover seconds (added to duration for spray missions).
+
+    Returns:
+        Dict with total_distance_m, estimated_duration_s, estimated_duration_str,
+        estimated_images, row_count, ground_footprint_m, altitude.
+    """
+    nav_wps = [w for w in waypoints if w.command == MAV_CMD_NAV_WAYPOINT]
+
+    if altitude is None and nav_wps:
+        altitude = nav_wps[0].alt
+    altitude = altitude or 0.0
+
+    # Total flight distance through nav waypoints
+    total_dist = 0.0
+    for i in range(len(nav_wps) - 1):
+        a, b = nav_wps[i], nav_wps[i + 1]
+        total_dist += _haversine(a.lat, a.lon, b.lat, b.lon)
+
+    flight_time = total_dist / max(flight_speed, 0.1)
+    hover_total = hover_time * len(nav_wps)
+    duration_s = flight_time + hover_total
+
+    # Camera ground footprint at this altitude
+    ground_w = 2 * altitude * math.tan(math.radians(camera_hfov_deg / 2))
+    ground_h = 2 * altitude * math.tan(math.radians(camera_vfov_deg / 2))
+
+    # Image count estimate: footprint along-track with overlap
+    row_count = max(1, len(nav_wps) // 2)
+    if row_count > 0 and ground_w > 0:
+        row_length = total_dist / max(row_count, 1)
+        imgs_per_row = max(1, int(row_length / max(ground_w * (1 - overlap), 0.1)))
+        estimated_images = row_count * imgs_per_row
+    else:
+        estimated_images = 0
+
+    return {
+        "total_distance_m": round(total_dist, 1),
+        "estimated_duration_s": round(duration_s, 1),
+        "estimated_duration_str": _fmt_duration(duration_s),
+        "estimated_images": estimated_images,
+        "row_count": row_count,
+        "ground_footprint_m": [round(ground_w, 2), round(ground_h, 2)],
+        "altitude": round(altitude, 2),
+        "waypoint_count": len(waypoints),
+        "nav_waypoint_count": len(nav_wps),
+    }
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Format seconds as a compact human-readable duration."""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    return f"{h}h {m}m"
+
+
 # ── MAVLink Export ──
 
 def to_mavlink_mission(waypoints: list[Waypoint]) -> list[dict]:

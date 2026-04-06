@@ -1197,10 +1197,101 @@ function toast(message, type = 'info') {
     setTimeout(() => el.remove(), 3000);
 }
 
+// ══════════════════════════════════════════
+// DRONE CONNECT MODAL
+// ══════════════════════════════════════════
+
+let currentDroneType = 'scout';
+
+async function openDroneConnect(droneType) {
+    currentDroneType = droneType;
+    document.getElementById('dcTitle').textContent =
+        `Connect ${droneType.charAt(0).toUpperCase() + droneType.slice(1)} Drone`;
+    document.getElementById('droneConnectModal').classList.add('visible');
+    await refreshDroneStatus();
+}
+
+function closeDroneConnect() {
+    document.getElementById('droneConnectModal').classList.remove('visible');
+}
+
+async function refreshDroneStatus() {
+    try {
+        const status = await fetch(`${API}/drone/status`).then(r => r.json());
+        const connected = currentDroneType === 'scout' ? status.scout_connected : status.treatment_connected;
+        const conn = currentDroneType === 'scout' ? status.scout_connection : status.treatment_connection;
+
+        const statusEl = document.getElementById('dcCurrentStatus');
+        if (connected) {
+            statusEl.textContent = `Connected: ${conn}`;
+            statusEl.classList.add('success');
+            document.getElementById('dcConnectBtn').textContent = 'Reconnect';
+            document.getElementById('dcDisconnectBtn').style.display = '';
+        } else {
+            statusEl.textContent = 'Not connected';
+            statusEl.classList.remove('success');
+            document.getElementById('dcConnectBtn').textContent = 'Connect';
+            document.getElementById('dcDisconnectBtn').style.display = 'none';
+        }
+
+        // Update header dots
+        document.getElementById('scoutDot').classList.toggle('connected', status.scout_connected);
+        document.getElementById('scoutDot').classList.toggle('offline', !status.scout_connected);
+        document.getElementById('treatDot').classList.toggle('connected', status.treatment_connected);
+        document.getElementById('treatDot').classList.toggle('offline', !status.treatment_connected);
+    } catch(e) {
+        console.error('refreshDroneStatus:', e);
+    }
+}
+
+async function droneConnect() {
+    const conn = document.getElementById('dcConn').value.trim();
+    if (!conn) {
+        toast('Enter a connection string', 'error');
+        return;
+    }
+    const btn = document.getElementById('dcConnectBtn');
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+    try {
+        const res = await fetch(`${API}/drone/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ drone_type: currentDroneType, connection: conn }),
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            toast(`Connect failed: ${err.detail || res.statusText}`, 'error');
+        } else {
+            toast(`${currentDroneType} drone connected`, 'success');
+            await refreshDroneStatus();
+        }
+    } catch(e) {
+        toast('Connection error', 'error');
+        console.error(e);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function droneDisconnect() {
+    try {
+        await fetch(`${API}/drone/disconnect/${currentDroneType}`, { method: 'POST' });
+        toast(`${currentDroneType} drone disconnected`, 'info');
+        await refreshDroneStatus();
+    } catch(e) {
+        toast('Disconnect failed', 'error');
+    }
+}
+
+// Refresh drone status on page load
+setTimeout(refreshDroneStatus, 500);
+
 // Allow ESC to close modals
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeWizard();
         closeMissionDetail();
+        closeDroneConnect();
     }
 });

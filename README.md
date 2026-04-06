@@ -2,7 +2,7 @@
 
 A two-drone precision agriculture system for automated crop disease detection and targeted treatment. A **Scout Drone** surveys fields and captures geotagged images; a **Treatment Drone** applies treatment only where disease is detected.
 
-**Status:** Proof of Concept (ML training pending, all software modules complete)
+**Status:** Proof of Concept — software pipeline complete (v0.2). ML training and field hardware pending.
 
 ## Project Structure
 
@@ -174,42 +174,103 @@ spray_id, spray_wps = bs.plan_spray_mission(scan_mission_id=mission_id)
 bs.export_spray_plan("spray_mission.plan", scan_mission_id=mission_id)
 ```
 
-## Dashboard
+## Dashboard (v0.2)
 
-Web-based control interface for mission management, detection visualization, and spray zone approval.
+Full-flow web control interface for the entire mission lifecycle: plan -> fly -> detect -> approve -> spray -> review.
 
 ```bash
 uvicorn dashboard.app:app --reload --port 8000
 ```
 
-Then open `http://localhost:8000`. Use **Seed Demo Data** to populate the map with sample data.
+Then open `http://localhost:8000`. Use **Load Demo Data** to populate, or **New Scan Mission** to start the wizard.
 
-**Features:**
-- Dark themed map (CARTO dark tiles) with Leaflet.js
-- Draw scan area polygons on map
-- Detection markers colour-coded by disease type
-- Spray zone polygons with approve/reject workflow
-- Health heatmap toggle (green -> red gradient)
-- Stat cards, tabbed panels, toast notifications
+### Features
+
+**Mission Management:**
+- **Mission Wizard** — 4-step flow: draw area -> configure altitude/overlap/speed/FOV -> preview waypoints + stats -> launch (simulate or save)
+- **Mission History panel** — browse all past missions with type/status filters, aggregated detection/zone/treatment counts
+- **Mission Detail modal** — full breakdown with timeline, stats, detection breakdown by class, spray zones, QGroundControl `.plan` export
+- **Real-time mission progress** — % complete shown in HUD, broadcast over WebSocket
+
+**Live Drone Tracking:**
+- **Telemetry HUD** overlay on the map — drone type, mode, altitude, speed, heading, battery (color-coded), mission progress bar
+- **Animated drone marker** with heading-rotated icon
+- **Breadcrumb trail** of past positions
+- **Follow mode** — map auto-pans with the drone
+- **WebSocket** push at 2 Hz from telemetry simulator or real drone
+
+**Drone Connection:**
+- Click the **Scout** or **Treatment** indicators in the header to open the connect modal
+- Supports MAVLink over UDP (SITL), TCP (WiFi), or Serial
+- Real drone telemetry takes precedence over the simulator when connected
+
+**Map Layers:**
+- Toggle detections, spray zones, health heatmap, flight path, drone trail independently
+- Click disease in legend to filter detections by class
+- Filter detections by text search + disease dropdown
+
+**Visualization:**
+- Dark theme (CARTO dark tiles) with Leaflet.js
+- Detection markers color-coded by disease, sized by confidence
+- Spray zones rendered as colored polygons with status badges
+- Health heatmap (green -> red gradient)
+- Disease distribution chart in sidebar
+- Animated stat cards with counter rollups
+- Animated dashed flight path polyline
 
 ### API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/` | Dashboard UI |
-| GET | `/api/stats` | Summary statistics |
-| POST | `/api/missions` | Create a mission |
+| GET | `/api/stats` | Summary statistics + disease distribution |
+| **Missions** | | |
+| POST | `/api/missions` | Create a mission (basic) |
 | GET | `/api/missions` | List missions |
-| GET | `/api/detections` | List detections |
-| POST | `/api/detections` | Add detection(s) |
-| GET | `/api/spray-zones` | List spray zones |
-| POST | `/api/spray-zones` | Add spray zone |
-| PUT | `/api/spray-zones/{id}` | Approve/reject a zone |
-| GET | `/api/treatments` | List treatments |
-| POST | `/api/treatments` | Log treatment |
-| GET | `/api/health` | Health heatmap data |
-| POST | `/api/demo/seed` | Seed demo data |
+| GET | `/api/missions/summary` | History list with aggregated counts (filterable) |
+| GET | `/api/missions/{id}` | Get mission detail |
+| GET | `/api/missions/{id}/full` | Mission with detections, zones, treatments |
+| PUT | `/api/missions/{id}` | Update mission status |
+| POST | `/api/missions/{id}/simulate` | Run simulated flight |
+| POST | `/api/missions/{id}/upload` | Upload mission to real drone |
+| POST | `/api/missions/{id}/launch` | Arm + start mission on real drone |
+| **Planning** | | |
+| POST | `/api/plan/scan` | Generate lawnmower waypoints + stats from polygon |
+| POST | `/api/plan/spray` | Generate TSP-optimised spray path from approved zones |
+| **Drone Control** | | |
+| POST | `/api/drone/connect` | Connect to real drone via MAVLink |
+| POST | `/api/drone/disconnect/{type}` | Disconnect scout/treatment |
+| GET | `/api/drone/status` | Current connection status |
+| GET | `/api/telemetry` | Latest telemetry snapshot (real or simulated) |
+| WS | `/ws/telemetry` | Live telemetry + event broadcast |
+| POST | `/api/simulator/stop` | Stop the telemetry simulator |
+| **Data** | | |
+| GET / POST | `/api/detections` | List / add detections |
+| GET / POST / PUT | `/api/spray-zones` | List / add / approve-reject zones |
+| GET / POST | `/api/treatments` | List / log treatments |
+| GET / POST | `/api/health` | Health heatmap data |
+| **Demo** | | |
+| POST | `/api/demo/seed` | Seed full demo dataset |
 | POST | `/api/demo/clear` | Clear all data |
+| POST | `/api/demo/full-flow` | Create planned mission ready to simulate |
+
+## Testing Without a Real Drone
+
+The dashboard ships with a built-in **telemetry simulator** that walks waypoint paths with realistic position interpolation, heading, battery drain, and progress tracking. No drone or SITL setup needed:
+
+1. Start the dashboard: `uvicorn dashboard.app:app --reload --port 8000`
+2. Click **New Scan Mission** → draw an area → preview → **Simulate Flight**
+3. Watch the drone marker fly along the path with live HUD updates
+
+For real ArduPilot SITL testing:
+
+```bash
+# In a separate terminal, launch ArduCopter SITL
+sim_vehicle.py -v ArduCopter --console
+
+# Then in the dashboard, click the Scout drone indicator in the header
+# and connect to: udp:127.0.0.1:14550
+```
 
 ## Architecture
 
