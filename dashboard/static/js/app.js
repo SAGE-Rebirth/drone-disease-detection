@@ -103,22 +103,24 @@ function initMap() {
     });
 
     map.on(L.Draw.Event.CREATED, (e) => {
+        // Capture mode BEFORE setMapMode mutates it
+        const wasWizardDraw = (mapMode === 'wizard-draw');
+
         drawnItems.clearLayers();
+        // Make the drawn polygon non-interactive so it doesn't block
+        // clicks on detection markers underneath.
+        if (e.layer.setStyle) {
+            e.layer.options.interactive = false;
+            if (e.layer._path) e.layer._path.style.pointerEvents = 'none';
+        }
         drawnItems.addLayer(e.layer);
+
         setMapMode('view');
 
-        if (mapMode === 'wizard-draw' || wizard.step === 1) {
+        if (wasWizardDraw) {
             captureWizardArea(e.layer);
         }
         toast('Scan area captured', 'success');
-    });
-
-    map.on('movestart', () => {
-        // Auto-disable follow when user pans manually
-        if (followingDrone) {
-            const followBtn = document.getElementById('followBtn');
-            // Only disable if not programmatic
-        }
     });
 }
 
@@ -232,6 +234,12 @@ function initWebSocket() {
             } else if (msg.type === 'mission_complete') {
                 toast(`Mission #${msg.mission_id} complete`, 'success');
                 loadAllData();
+            } else if (msg.type === 'mission_aborted') {
+                toast(`Mission #${msg.mission_id} aborted`, 'error');
+                loadAllData();
+            } else if (msg.type === 'data_cleared') {
+                // Server-initiated clear — tear down everything immediately
+                tearDownFlightVisuals();
             }
         } catch(e) {
             console.error('WS parse error:', e);
@@ -249,32 +257,108 @@ function initWebSocket() {
     };
 }
 
+// Track the last mission ID we saw so the user can Restart from the stopped HUD
+let _lastFlightMissionId = null;
+// Preview mode: HUD is showing a mission that the user has selected but not yet started
+let _previewMode = false;
+let _previewMission = null;
+
 function updateTelemetry(data) {
     const hud = document.getElementById('telemetryHud');
+    const liveControls = document.getElementById('hudLiveControls');
+    const stoppedControls = document.getElementById('hudStoppedControls');
+    const previewControls = document.getElementById('hudPreviewControls');
 
-    if (!data.active) {
-        hud.classList.remove('visible');
-        // Still update mode display
-        document.getElementById('hudMode').textContent = 'STANDBY';
-        // Update header dots
-        document.getElementById('scoutDot').classList.add('offline');
-        document.getElementById('treatDot').classList.add('offline');
+    // Inactive AND not paused = the flight has ended (stop/abort/complete).
+    // Keep the HUD visible in "stopped state" so the user can see the final
+    // stats and choose to Restart or Dismiss. Only Clear Data or Dismiss
+    // actually removes the marker/trail.
+    if (!data.active && !data.paused) {
+        // If we're in preview mode (user clicked a mission to inspect/control it),
+        // keep the preview HUD visible — don't get overridden by sim's idle state.
+        if (_previewMode) return;
+
+        // If we have a mission_id, the flight is in "stopped" state.
+        // If mission_id is null too (post-clear/reset), tear down completely.
+        if (data.mission_id == null && data.lat == null) {
+            hud.classList.remove('visible');
+            if (droneMarker) { map.removeLayer(droneMarker); droneMarker = null; }
+            if (droneTrail)  { map.removeLayer(droneTrail);  droneTrail  = null; }
+            droneTrailPoints = [];
+            _lastDroneState = { type: null, heading: 0, innerEl: null };
+            _stopDroneAnimation();
+            if (data.source === 'simulator') {
+                document.getElementById('scoutDot').classList.add('offline');
+                document.getElementById('treatDot').classList.add('offline');
+            }
+            return;
+        }
+
+        // Stopped state — keep HUD visible, swap controls
+        hud.classList.add('visible');
+        liveControls.style.display = 'none';
+        previewControls.style.display = 'none';
+        stoppedControls.style.display = 'flex';
+
+        // Mode badge
+        const modeEl = document.getElementById('hudMode');
+        modeEl.classList.remove('stopped', 'aborted', 'complete');
+        if (data.aborted) {
+            modeEl.textContent = 'ABORTED';
+            modeEl.classList.add('aborted');
+        } else if (data.progress >= 0.999) {
+            modeEl.textContent = 'COMPLETE';
+            modeEl.classList.add('complete');
+        } else {
+            modeEl.textContent = 'STOPPED';
+            modeEl.classList.add('stopped');
+        }
+
+        // Stop the rAF interpolation but leave the marker visible
+        // at its final position for context.
+        _stopDroneAnimation();
         return;
     }
 
+    // Active flight — exit preview mode
+    _previewMode = false;
+    _previewMission = null;
+
     hud.classList.add('visible');
+    liveControls.style.display = 'flex';
+    stoppedControls.style.display = 'none';
+    previewControls.style.display = 'none';
+    document.getElementById('hudMode').classList.remove('stopped', 'aborted', 'complete');
+
+    // Remember the mission so Restart works after stop
+    if (data.mission_id) _lastFlightMissionId = data.mission_id;
 
     // Title and icon based on drone type
-    document.getElementById('hudTitle').textContent =
-        data.drone_type === 'spray' || data.drone_type === 'treatment' ? 'TREATMENT DRONE' : 'SCOUT DRONE';
-    document.getElementById('hudDroneIcon').textContent =
-        data.drone_type === 'spray' || data.drone_type === 'treatment' ? '💧' : '🛰';
+    const isTreatment = data.drone_type === 'spray' || data.drone_type === 'treatment';
+    document.getElementById('hudTitle').textContent = isTreatment ? 'TREATMENT DRONE' : 'SCOUT DRONE';
+    document.getElementById('hudDroneIcon').textContent = isTreatment ? '💧' : '🛰';
 
     document.getElementById('hudMode').textContent = data.mode || 'AUTO';
     document.getElementById('hudAlt').textContent = (data.alt || 0).toFixed(1);
     document.getElementById('hudSpeed').textContent = (data.groundspeed || 0).toFixed(1);
     document.getElementById('hudHeading').textContent = Math.round(data.heading || 0);
     document.getElementById('hudBattery').textContent = Math.round(data.battery || 0);
+
+    // Compass needle rotation
+    document.getElementById('compassNeedle').style.transform =
+        `translate(-50%, -100%) rotate(${data.heading || 0}deg)`;
+
+    // Mission stats — elapsed/eta/wpt
+    document.getElementById('hudElapsed').textContent = formatTimeShort(data.elapsed_s || 0);
+    document.getElementById('hudEta').textContent = data.eta_s ? formatTimeShort(data.eta_s) : '--';
+    document.getElementById('hudWpt').textContent =
+        `${(data.waypoint_index || 0) + 1}/${data.waypoint_count || 0}`;
+    document.getElementById('hudDistNext').textContent =
+        (data.distance_to_next_m != null ? data.distance_to_next_m : 0).toFixed(0);
+    document.getElementById('hudDistTraveled').textContent =
+        (data.distance_traveled_m != null ? data.distance_traveled_m : 0).toFixed(0);
+    document.getElementById('hudDistTotal').textContent =
+        (data.total_distance_m != null ? data.total_distance_m : 0).toFixed(0);
 
     // Battery bar
     const batFill = document.getElementById('batteryFill');
@@ -284,34 +368,102 @@ function updateTelemetry(data) {
     if (batPct < 20) batFill.classList.add('critical');
     else if (batPct < 40) batFill.classList.add('low');
 
-    // Progress
-    const pct = Math.round((data.progress || 0) * 100);
-    document.getElementById('hudProgress').textContent = pct + '%';
-    document.getElementById('progressFill').style.width = pct + '%';
+    // Progress — use 1 decimal precision when below 10% so the display
+    // visibly increments on long missions at 1× speed (otherwise rounding
+    // makes the % appear stuck at 0 for many ticks).
+    const pctRaw = (data.progress || 0) * 100;
+    const pctText = pctRaw < 10 ? pctRaw.toFixed(1) + '%' : Math.round(pctRaw) + '%';
+    document.getElementById('hudProgress').textContent = pctText;
+    document.getElementById('progressFill').style.width = pctRaw + '%';
 
-    // Drone position on map
+    // Pause/Resume button toggle
+    const pauseBtn = document.getElementById('hudPauseBtn');
+    const resumeBtn = document.getElementById('hudResumeBtn');
+    if (data.paused) {
+        pauseBtn.style.display = 'none';
+        resumeBtn.style.display = '';
+    } else {
+        pauseBtn.style.display = '';
+        resumeBtn.style.display = 'none';
+    }
+
+    // Highlight active speed multiplier button
+    const mult = data.speed_multiplier || 1;
+    document.querySelectorAll('.hud-speed-btn').forEach(btn => {
+        btn.classList.toggle('active', parseFloat(btn.dataset.mult) === mult);
+    });
+
+    // Drone position on map (only update if we have coords and not paused-stationary)
     if (data.lat && data.lon) {
         updateDroneMarker(data.lat, data.lon, data.heading, data.drone_type);
 
-        // Header status dot
         if (data.drone_type === 'scout') {
             document.getElementById('scoutDot').classList.remove('offline');
         } else {
             document.getElementById('treatDot').classList.remove('offline');
         }
 
-        // Auto-refresh detections/zones periodically while flying
+        // Periodic stats refresh while flying
         if (Math.random() < 0.05) loadStats();
     }
+}
+
+function formatTimeShort(seconds) {
+    if (seconds == null || isNaN(seconds)) return '--';
+    seconds = Math.max(0, Math.round(seconds));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${m}:${String(s).padStart(2,'0')}`;
 }
 
 // ══════════════════════════════════════════
 // DRONE MARKER & TRAIL
 // ══════════════════════════════════════════
 
+// Cache last drone state to avoid pointless DOM writes
+let _lastDroneState = { type: null, heading: 0, innerEl: null };
+
+// Inline SVG drone icons (top-down view, 24x24 viewBox).
+const DRONE_ICONS = {
+    scout: `<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2" fill="white"/></svg>`,
+    treatment: `<svg viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="1.5" stroke-linejoin="round" width="16" height="16"><path d="M12 2.5C8 9 6 12 6 15a6 6 0 0 0 12 0c0-3-2-6-6-12.5z"/></svg>`,
+};
+
+// ── Smooth interpolation between WS telemetry updates ──
+//
+// WS pushes telemetry every 500ms. Without interpolation the marker
+// "teleports" — especially obvious in lawnmower patterns where short
+// row-turn segments compound the jitter.
+//
+// We use time-based linear interpolation: each WS frame defines a
+// (from, to, startTime) triplet, and the rAF loop renders the marker
+// at `from + (to - from) * (elapsed/500ms)` clamped to 1.0. This produces
+// continuous motion that always reaches the target exactly when the next
+// WS frame arrives.
+const WS_INTERVAL_MS = 500;
+const _droneCurrent  = { lat: null, lon: null, heading: 0 };
+const _droneInterpFrom = { lat: 0, lon: 0, heading: 0 };
+const _droneInterpTo   = { lat: 0, lon: 0, heading: 0 };
+let _droneInterpStart = 0;
+let _droneRafId = null;
+
+function shortestAngleDelta(from, to) {
+    // Returns the signed angle (in degrees) from `from` to `to` taking
+    // the shortest path. Range: (-180, 180].
+    let d = ((to - from + 540) % 360) - 180;
+    return d;
+}
+
+function lerpAngle(from, to, t) {
+    return from + shortestAngleDelta(from, to) * t;
+}
+
 function updateDroneMarker(lat, lon, heading, type) {
-    const droneClass = type === 'spray' || type === 'treatment' ? 'drone-marker treatment' : 'drone-marker';
-    const icon = type === 'spray' || type === 'treatment' ? '💧' : '✈';
+    const isTreatment = type === 'spray' || type === 'treatment';
+    const droneClass = isTreatment ? 'drone-marker treatment' : 'drone-marker';
+    const icon = isTreatment ? DRONE_ICONS.treatment : DRONE_ICONS.scout;
 
     if (!droneMarker) {
         const html = `<div class="${droneClass}" style="transform: rotate(${heading || 0}deg);">${icon}</div>`;
@@ -321,44 +473,118 @@ function updateDroneMarker(lat, lon, heading, type) {
             iconSize: [32, 32],
             iconAnchor: [16, 16],
         });
-        droneMarker = L.marker([lat, lon], { icon: divIcon, zIndexOffset: 1000 }).addTo(map);
+        droneMarker = L.marker([lat, lon], {
+            icon: divIcon,
+            zIndexOffset: 1000,
+            interactive: false,
+            keyboard: false,
+        }).addTo(map);
+
+        // Snap on first frame — no interpolation source yet
+        _droneCurrent.lat = lat; _droneCurrent.lon = lon; _droneCurrent.heading = heading || 0;
+        _droneInterpFrom.lat = lat; _droneInterpFrom.lon = lon; _droneInterpFrom.heading = heading || 0;
+        _droneInterpTo.lat = lat; _droneInterpTo.lon = lon; _droneInterpTo.heading = heading || 0;
+        _droneInterpStart = performance.now();
+        _lastDroneState = { type: type, heading: heading || 0, innerEl: null };
+
+        if (!_droneRafId) _droneRafId = requestAnimationFrame(_droneAnimateFrame);
     } else {
-        droneMarker.setLatLng([lat, lon]);
-        const el = droneMarker.getElement();
-        if (el) {
-            const inner = el.querySelector('.drone-marker');
-            if (inner) {
-                inner.className = droneClass;
-                inner.style.transform = `rotate(${heading || 0}deg)`;
-                inner.textContent = icon;
-            }
+        // New WS frame — set up the next interpolation segment.
+        // From = current displayed position (smooth handoff, no jumps)
+        // To   = newly received position
+        _droneInterpFrom.lat = _droneCurrent.lat;
+        _droneInterpFrom.lon = _droneCurrent.lon;
+        _droneInterpFrom.heading = _droneCurrent.heading;
+
+        _droneInterpTo.lat = lat;
+        _droneInterpTo.lon = lon;
+        _droneInterpTo.heading = heading || 0;
+
+        _droneInterpStart = performance.now();
+
+        // Update icon class if the type changed (rare)
+        if (!_lastDroneState.innerEl) {
+            const el = droneMarker.getElement();
+            if (el) _lastDroneState.innerEl = el.querySelector('.drone-marker');
+        }
+        if (_lastDroneState.innerEl && _lastDroneState.type !== type) {
+            _lastDroneState.innerEl.className = droneClass;
+            _lastDroneState.innerEl.innerHTML = icon;
+            _lastDroneState.type = type;
         }
     }
 
-    // Trail
-    droneTrailPoints.push([lat, lon]);
-    if (droneTrailPoints.length > 200) droneTrailPoints.shift();
+    // Trail — only append if position actually moved (deduplicates pause ticks)
+    const lastPt = droneTrailPoints[droneTrailPoints.length - 1];
+    if (!lastPt || lastPt[0] !== lat || lastPt[1] !== lon) {
+        droneTrailPoints.push([lat, lon]);
+        if (droneTrailPoints.length > 300) droneTrailPoints.shift();
 
-    if (!droneTrail) {
-        droneTrail = L.polyline(droneTrailPoints, {
-            color: '#06b6d4', weight: 2, opacity: 0.7, dashArray: '4 4',
-        });
-        if (document.getElementById('toggleTrail').checked) droneTrail.addTo(map);
-    } else {
-        droneTrail.setLatLngs(droneTrailPoints);
+        if (!droneTrail) {
+            droneTrail = L.polyline(droneTrailPoints, {
+                color: '#06b6d4', weight: 2, opacity: 0.7, dashArray: '4 4',
+                interactive: false,
+            });
+            if (document.getElementById('toggleTrail').checked) droneTrail.addTo(map);
+        } else {
+            droneTrail.setLatLngs(droneTrailPoints);
+        }
+    }
+}
+
+// rAF interpolation loop — drives the marker at display refresh rate (~60fps)
+// using time-based linear interpolation between consecutive WS frames.
+function _droneAnimateFrame() {
+    if (!droneMarker) {
+        _droneRafId = requestAnimationFrame(_droneAnimateFrame);
+        return;
     }
 
+    // t = fraction of WS interval elapsed since last frame, clamped [0, 1]
+    const elapsed = performance.now() - _droneInterpStart;
+    const t = Math.min(1.0, elapsed / WS_INTERVAL_MS);
+
+    _droneCurrent.lat = _droneInterpFrom.lat + (_droneInterpTo.lat - _droneInterpFrom.lat) * t;
+    _droneCurrent.lon = _droneInterpFrom.lon + (_droneInterpTo.lon - _droneInterpFrom.lon) * t;
+    _droneCurrent.heading = lerpAngle(_droneInterpFrom.heading, _droneInterpTo.heading, t);
+
+    // Apply to Leaflet (no Leaflet animation — we drive every frame ourselves)
+    droneMarker.setLatLng([_droneCurrent.lat, _droneCurrent.lon]);
+
+    if (_lastDroneState.innerEl) {
+        _lastDroneState.innerEl.style.transform = `rotate(${_droneCurrent.heading}deg)`;
+    }
+
+    // Follow mode — pan the map at the rAF cadence (no panTo animation conflicts)
     if (followingDrone) {
-        map.panTo([lat, lon], { animate: true, duration: 0.4 });
+        map.setView([_droneCurrent.lat, _droneCurrent.lon], map.getZoom(), {
+            animate: false,
+            reset: false,
+        });
     }
+
+    _droneRafId = requestAnimationFrame(_droneAnimateFrame);
+}
+
+function _stopDroneAnimation() {
+    if (_droneRafId) {
+        cancelAnimationFrame(_droneRafId);
+        _droneRafId = null;
+    }
+    _droneCurrent.lat = null; _droneCurrent.lon = null; _droneCurrent.heading = 0;
+    _droneInterpFrom.lat = 0; _droneInterpFrom.lon = 0; _droneInterpFrom.heading = 0;
+    _droneInterpTo.lat = 0; _droneInterpTo.lon = 0; _droneInterpTo.heading = 0;
+    _droneInterpStart = 0;
 }
 
 function followDrone() {
     followingDrone = !followingDrone;
     const btn = document.getElementById('followBtn');
     btn.classList.toggle('btn-primary', followingDrone);
-    if (followingDrone && droneMarker) {
-        map.flyTo(droneMarker.getLatLng(), 17, { duration: 0.6 });
+    if (followingDrone) {
+        if (droneMarker) {
+            map.flyTo(droneMarker.getLatLng(), 17, { duration: 0.6 });
+        }
         toast('Following drone', 'info');
     } else {
         toast('Stopped following', 'info');
@@ -552,8 +778,14 @@ async function loadSprayZones() {
                 </div>
                 ${zone.status === 'pending' ? `
                 <div class="zone-actions">
-                    <button class="btn btn-success btn-sm" onclick="approveZone(${zone.id})">Approve</button>
-                    <button class="btn btn-danger btn-sm" onclick="rejectZone(${zone.id})">Reject</button>
+                    <button class="btn btn-success btn-sm" onclick="approveZone(${zone.id})">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        Approve
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="rejectZone(${zone.id})">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        Reject
+                    </button>
                 </div>` : ''}
             `;
             if (zone.center_lat && zone.center_lon) {
@@ -654,8 +886,8 @@ async function loadMissionHistory() {
         data.forEach((m, i) => {
             const isSpray = m.type === 'spray';
             const iconHtml = isSpray
-                ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6m0 0l-3-3m3 3l3-3"/><circle cx="12" cy="14" r="6"/></svg>`
-                : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>`;
+                ? `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"><path d="M12 3c-2.5 4-4 6.5-4 9a4 4 0 0 0 8 0c0-2.5-1.5-5-4-9z"/></svg>`
+                : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>`;
 
             const card = document.createElement('div');
             card.className = 'mission-card';
@@ -833,13 +1065,15 @@ function renderFlightPath(waypoints) {
     const path = navWps.map(wp => [wp.x, wp.y]);
     if (path.length < 2) return;
 
+    // Non-interactive so it doesn't block clicks on detections beneath
     const polyline = L.polyline(path, {
         color: '#3b82f6', weight: 3, opacity: 0.85,
         className: 'flight-path',
+        interactive: false,
     });
     flightPathLayer.addLayer(polyline);
 
-    // Start/end markers
+    // Start/end markers (still interactive — they have popups)
     const start = L.circleMarker(path[0], {
         radius: 6, color: '#10b981', fillColor: '#10b981', fillOpacity: 1, weight: 2,
     }).bindPopup('<strong>Start</strong>');
@@ -985,6 +1219,9 @@ async function openMissionDetail(missionId) {
         // Show flight path on map if waypoints exist
         if (wps.length > 0) {
             renderFlightPath(wps);
+            // Activate the HUD as a control panel for this mission so the
+            // user gets immediate access to Start / Pause / Stop / Restart.
+            activateControlPanel(m);
         }
 
         // Highlight scan area
@@ -1129,21 +1366,224 @@ async function seedDemoData() {
     setTimeout(() => map.flyTo([12.9716, 77.5946], 15, { duration: 1.2 }), 300);
 }
 
+function tearDownFlightVisuals() {
+    // Remove every flight-related element from the map and HUD
+    if (droneMarker) { map.removeLayer(droneMarker); droneMarker = null; }
+    if (droneTrail)  { map.removeLayer(droneTrail);  droneTrail  = null; }
+    droneTrailPoints = [];
+    _lastDroneState = { type: null, heading: 0, innerEl: null };
+    _stopDroneAnimation();
+    _previewMode = false;
+    _previewMission = null;
+    document.getElementById('telemetryHud').classList.remove('visible');
+    document.getElementById('scoutDot').classList.add('offline');
+    document.getElementById('treatDot').classList.add('offline');
+    flightPathLayer.clearLayers();
+    document.getElementById('hudMode').textContent = 'STANDBY';
+}
+
 async function clearAllData() {
     if (!confirm('Clear all data? This cannot be undone.')) return;
+
+    // Stop simulator first so it can't push new telemetry mid-clear
+    try { await fetch(`${API}/simulator/stop`, { method: 'POST' }); } catch(e) {}
+
+    // Now clear data
     await fetch(`${API}/demo/clear`, { method: 'POST' });
-    toast('All data cleared', 'info');
+
+    // Tear down all visuals
     detectionMarkers.clearLayers();
     sprayZoneLayer.clearLayers();
-    flightPathLayer.clearLayers();
     scanAreaLayer.clearLayers();
     if (healthHeatLayer) { map.removeLayer(healthHeatLayer); healthHeatLayer = null; }
-    if (droneMarker) { map.removeLayer(droneMarker); droneMarker = null; }
-    if (droneTrail) { map.removeLayer(droneTrail); droneTrail = null; }
-    droneTrailPoints = [];
     drawnItems.clearLayers();
-    document.getElementById('telemetryHud').classList.remove('visible');
+    tearDownFlightVisuals();
+    followingDrone = false;
+    document.getElementById('followBtn').classList.remove('btn-primary');
+
+    toast('All data cleared', 'info');
     await loadAllData();
+}
+
+// ══════════════════════════════════════════
+// FLIGHT SIMULATION CONTROLS
+// ══════════════════════════════════════════
+
+async function simPause() {
+    try {
+        await fetch(`${API}/simulator/pause`, { method: 'POST' });
+        toast('Simulation paused', 'info');
+    } catch(e) { toast('Pause failed', 'error'); }
+}
+
+async function simResume() {
+    try {
+        await fetch(`${API}/simulator/resume`, { method: 'POST' });
+        toast('Simulation resumed', 'info');
+    } catch(e) { toast('Resume failed', 'error'); }
+}
+
+async function simStop() {
+    if (!confirm('Stop the current flight?')) return;
+    try {
+        await fetch(`${API}/simulator/stop`, { method: 'POST' });
+        toast('Flight stopped', 'info');
+    } catch(e) { toast('Stop failed', 'error'); }
+}
+
+async function simAbort() {
+    if (!confirm('Abort the current mission? It will be marked as aborted.')) return;
+    try {
+        await fetch(`${API}/simulator/abort`, { method: 'POST' });
+        toast('Mission aborted', 'error');
+    } catch(e) { toast('Abort failed', 'error'); }
+}
+
+async function simSpeed(multiplier) {
+    try {
+        await fetch(`${API}/simulator/speed`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ multiplier }),
+        });
+        toast(`Speed: ${multiplier}×`, 'info');
+    } catch(e) { toast('Speed change failed', 'error'); }
+}
+
+async function simRestart() {
+    if (!_lastFlightMissionId) {
+        toast('No mission to restart', 'error');
+        return;
+    }
+    try {
+        // Clear the trail/marker first so the restart looks clean
+        if (droneTrail) { map.removeLayer(droneTrail); droneTrail = null; }
+        droneTrailPoints = [];
+        if (droneMarker) { map.removeLayer(droneMarker); droneMarker = null; }
+        _lastDroneState = { type: null, heading: 0, innerEl: null };
+        _stopDroneAnimation();
+
+        await fetch(`${API}/missions/${_lastFlightMissionId}/simulate`, { method: 'POST' });
+        toast(`Restarting mission #${_lastFlightMissionId}`, 'success');
+    } catch(e) {
+        toast('Restart failed', 'error');
+    }
+}
+
+function dismissHud() {
+    document.getElementById('telemetryHud').classList.remove('visible');
+    if (droneMarker) { map.removeLayer(droneMarker); droneMarker = null; }
+    if (droneTrail)  { map.removeLayer(droneTrail);  droneTrail  = null; }
+    droneTrailPoints = [];
+    _lastDroneState = { type: null, heading: 0, innerEl: null };
+    _stopDroneAnimation();
+    _previewMode = false;
+    _previewMission = null;
+    document.getElementById('scoutDot').classList.add('offline');
+    document.getElementById('treatDot').classList.add('offline');
+}
+
+// ══════════════════════════════════════════
+// CONTROL PANEL — show HUD for selected mission
+// ══════════════════════════════════════════
+
+/**
+ * Activate the control panel (HUD) for a selected mission.
+ *
+ * If the simulator is currently running this same mission, the HUD shows the
+ * live state automatically (via the next WS update). Otherwise, the HUD enters
+ * "preview" mode showing the mission's static info with a Start button.
+ */
+function activateControlPanel(mission) {
+    if (!mission) return;
+    _lastFlightMissionId = mission.id;
+
+    const wps = mission.waypoints
+        ? (typeof mission.waypoints === 'string' ? JSON.parse(mission.waypoints) : mission.waypoints)
+        : [];
+
+    if (wps.length === 0) {
+        toast('Mission has no waypoints', 'error');
+        return;
+    }
+
+    _previewMode = true;
+    _previewMission = mission;
+
+    // Show HUD in preview state
+    const hud = document.getElementById('telemetryHud');
+    hud.classList.add('visible');
+    document.getElementById('hudLiveControls').style.display = 'none';
+    document.getElementById('hudStoppedControls').style.display = 'none';
+    document.getElementById('hudPreviewControls').style.display = 'flex';
+
+    // Title and badge
+    const isSpray = mission.type === 'spray';
+    document.getElementById('hudTitle').textContent =
+        `MISSION #${mission.id} · ${isSpray ? 'TREATMENT' : 'SCOUT'}`;
+    document.getElementById('hudDroneIcon').textContent = isSpray ? '💧' : '🛰';
+
+    const modeEl = document.getElementById('hudMode');
+    modeEl.classList.remove('stopped', 'aborted', 'complete');
+    modeEl.textContent = 'READY';
+
+    // Compute static info from waypoints
+    const navWps = wps.filter(w => w.command === 16);
+    let totalDist = 0;
+    for (let i = 0; i < navWps.length - 1; i++) {
+        totalDist += _haversineMeters(
+            navWps[i].x, navWps[i].y,
+            navWps[i + 1].x, navWps[i + 1].y,
+        );
+    }
+    const altitude = navWps.length > 0 ? navWps[0].z : 0;
+
+    // Reset HUD live values to ready state
+    document.getElementById('hudAlt').textContent = altitude.toFixed(1);
+    document.getElementById('hudSpeed').textContent = '0.0';
+    document.getElementById('hudHeading').textContent = '0';
+    document.getElementById('hudBattery').textContent = '100';
+    const batFill = document.getElementById('batteryFill');
+    batFill.style.width = '100%';
+    batFill.classList.remove('low', 'critical');
+    document.getElementById('hudElapsed').textContent = '0:00';
+    document.getElementById('hudEta').textContent = formatTimeShort(totalDist / 2.0);
+    document.getElementById('hudWpt').textContent = `0/${wps.length}`;
+    document.getElementById('hudDistNext').textContent = '0';
+    document.getElementById('hudDistTraveled').textContent = '0';
+    document.getElementById('hudDistTotal').textContent = totalDist.toFixed(0);
+    document.getElementById('hudProgress').textContent = '0%';
+    document.getElementById('progressFill').style.width = '0%';
+    document.getElementById('compassNeedle').style.transform = 'translate(-50%, -100%) rotate(0deg)';
+
+    // Render the flight path on the map for context
+    renderFlightPath(wps);
+}
+
+function _haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function startSelectedMission() {
+    if (!_lastFlightMissionId) {
+        toast('No mission selected', 'error');
+        return;
+    }
+    try {
+        await fetch(`${API}/missions/${_lastFlightMissionId}/simulate`, { method: 'POST' });
+        toast(`Starting mission #${_lastFlightMissionId}`, 'success');
+        // _previewMode will flip false on the next WS frame (active=true)
+        followingDrone = true;
+        document.getElementById('followBtn').classList.add('btn-primary');
+    } catch(e) {
+        toast('Start failed', 'error');
+    }
 }
 
 function centerMap() {

@@ -76,27 +76,43 @@ class TelemetrySimulator:
 
     Used when no real drone is connected — allows the dashboard's live
     tracking features to work for demos and development.
+
+    Supports pause, resume, stop, abort and a speed multiplier so the
+    operator can fast-forward long flights.
     """
+
+    BASE_SPEED = 2.0   # m/s, multiplied by speed_multiplier
 
     def __init__(self):
         self.active = False
+        self.paused = False
+        self.aborted = False
         self.mission_id = None
-        self.drone_type = "scout"        # 'scout' or 'treatment'
+        self.drone_type = "scout"
         self.waypoints = []
+        self.segment_distances = []     # cached metres per segment
+        self.total_distance = 0.0
         self.current_idx = 0
-        self.position = None              # (lat, lon)
+        self.position = None
         self.alt = 0.0
         self.heading = 0.0
         self.battery = 100
         self.speed = 0.0
+        self.speed_multiplier = 1.0
         self.mode = "STANDBY"
         self.armed = False
-        self.progress = 0.0               # 0-1
-        self._segment_progress = 0.0      # 0-1 within current segment
+        self.progress = 0.0
+        self.elapsed_s = 0.0             # sim seconds since start
+        self.distance_traveled = 0.0
+        self._segment_progress = 0.0
 
     def start(self, mission_id: int, waypoints: list, drone_type: str = "scout"):
         """Begin simulating a mission."""
+        # Reset everything
+        self.reset()
         self.active = True
+        self.paused = False
+        self.aborted = False
         self.mission_id = mission_id
         self.drone_type = drone_type
         self.waypoints = [
@@ -106,71 +122,192 @@ class TelemetrySimulator:
         self.current_idx = 0
         self._segment_progress = 0.0
         self.battery = 100
-        self.speed = 2.0
+        self.speed = self.BASE_SPEED * self.speed_multiplier
         self.mode = "AUTO"
         self.armed = True
         self.progress = 0.0
+        self.elapsed_s = 0.0
+        self.distance_traveled = 0.0
         if self.waypoints:
             self.position = (self.waypoints[0][0], self.waypoints[0][1])
             self.alt = self.waypoints[0][2]
 
+        # Pre-compute segment distances for ETA
+        self._compute_segment_distances()
+
+    def _compute_segment_distances(self):
+        self.segment_distances = []
+        self.total_distance = 0.0
+        for i in range(len(self.waypoints) - 1):
+            a, b = self.waypoints[i], self.waypoints[i + 1]
+            mlat = 111_320
+            mlon = 111_320 * math.cos(math.radians(a[0]))
+            d = math.sqrt(((b[0] - a[0]) * mlat) ** 2 + ((b[1] - a[1]) * mlon) ** 2)
+            self.segment_distances.append(d)
+            self.total_distance += d
+
+    def reset(self):
+        """Reset all flight state — used after stop/abort/clear."""
+        self.active = False
+        self.paused = False
+        self.aborted = False
+        self.mission_id = None
+        self.waypoints = []
+        self.segment_distances = []
+        self.total_distance = 0.0
+        self.current_idx = 0
+        self.position = None
+        self.alt = 0.0
+        self.heading = 0.0
+        self.battery = 100
+        self.speed = 0.0
+        self.mode = "STANDBY"
+        self.armed = False
+        self.progress = 0.0
+        self.elapsed_s = 0.0
+        self.distance_traveled = 0.0
+        self._segment_progress = 0.0
+
     def stop(self):
+        """Graceful stop (mission complete)."""
         self.active = False
         self.mode = "STANDBY"
         self.armed = False
         self.speed = 0.0
 
+    def abort(self):
+        """Emergency abort — mission marked as aborted."""
+        self.active = False
+        self.paused = False
+        self.aborted = True
+        self.mode = "ABORTED"
+        self.armed = False
+        self.speed = 0.0
+
+    def pause(self):
+        if self.active:
+            self.paused = True
+            self.mode = "PAUSED"
+            self.speed = 0.0
+
+    def resume(self):
+        if self.active and self.paused:
+            self.paused = False
+            self.mode = "AUTO"
+            self.speed = self.BASE_SPEED * self.speed_multiplier
+
+    def set_speed_multiplier(self, mult: float):
+        mult = max(0.25, min(mult, 16.0))
+        self.speed_multiplier = mult
+        if self.active and not self.paused:
+            self.speed = self.BASE_SPEED * mult
+
     def step(self, dt: float = 0.5):
-        """Advance simulation by `dt` seconds."""
-        if not self.active or not self.waypoints:
+        """Advance simulation by `dt` seconds.
+
+        Consumes as many segments as fit into the dt budget. This is important
+        for lawnmower patterns where the row-turn segments are very short
+        (often <5m) and a single 0.5s tick at 8x speed can span 2-3 segments.
+        Without multi-segment consumption, the drone would stutter at every
+        row turn.
+        """
+        if not self.active or self.paused or not self.waypoints:
             return
         if self.current_idx >= len(self.waypoints) - 1:
             self.stop()
             self.progress = 1.0
             return
 
-        a = self.waypoints[self.current_idx]
-        b = self.waypoints[self.current_idx + 1]
+        self.elapsed_s += dt
 
-        # Approximate metres between waypoints
-        mlat = 111_320
-        mlon = 111_320 * math.cos(math.radians(a[0]))
-        seg_dist = math.sqrt(
-            ((b[0] - a[0]) * mlat) ** 2 + ((b[1] - a[1]) * mlon) ** 2
-        )
-        seg_dist = max(seg_dist, 0.1)
+        # Total distance to cover this tick
+        budget = self.speed * dt
 
-        step_dist = self.speed * dt
-        self._segment_progress += step_dist / seg_dist
+        # Consume segments until budget runs out or we hit the end
+        while budget > 0 and self.current_idx < len(self.waypoints) - 1:
+            a = self.waypoints[self.current_idx]
+            b = self.waypoints[self.current_idx + 1]
 
-        if self._segment_progress >= 1.0:
-            self.current_idx += 1
-            self._segment_progress = 0.0
-            self.position = (b[0], b[1])
-            self.alt = b[2]
-        else:
-            t = self._segment_progress
-            self.position = (
-                a[0] + (b[0] - a[0]) * t,
-                a[1] + (b[1] - a[1]) * t,
+            seg_dist = (
+                self.segment_distances[self.current_idx]
+                if self.current_idx < len(self.segment_distances) else 0.1
             )
-            self.alt = a[2] + (b[2] - a[2]) * t
+            seg_dist = max(seg_dist, 0.1)
 
-        # Heading
-        dx = (b[1] - a[1]) * mlon
-        dy = (b[0] - a[0]) * mlat
-        self.heading = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+            seg_remaining_m = seg_dist * (1.0 - self._segment_progress)
 
-        # Battery drain
-        self.battery = max(15, self.battery - 0.05)
+            if budget >= seg_remaining_m:
+                # Finish this segment, advance to next
+                self.distance_traveled += seg_remaining_m
+                budget -= seg_remaining_m
+                self.current_idx += 1
+                self._segment_progress = 0.0
+                self.position = (b[0], b[1])
+                self.alt = b[2]
+                self._update_heading(a, b)
+
+                # If we just consumed the final segment, stop immediately
+                # so the loop broadcasts the completion on this same tick.
+                if self.current_idx >= len(self.waypoints) - 1:
+                    self.distance_traveled = self.total_distance
+                    self.progress = 1.0
+                    self.stop()
+                    return
+            else:
+                # Partial advance within this segment
+                t_advance = budget / seg_dist
+                self._segment_progress = min(1.0, self._segment_progress + t_advance)
+                t = self._segment_progress
+                self.position = (
+                    a[0] + (b[0] - a[0]) * t,
+                    a[1] + (b[1] - a[1]) * t,
+                )
+                self.alt = a[2] + (b[2] - a[2]) * t
+                self._update_heading(a, b)
+                self.distance_traveled += budget
+                budget = 0
+
+        # Battery drain (scales with speed multiplier)
+        self.battery = max(15, self.battery - 0.05 * self.speed_multiplier)
 
         # Overall progress
-        if len(self.waypoints) > 1:
+        if self.total_distance > 0:
+            self.progress = min(1.0, self.distance_traveled / self.total_distance)
+        elif len(self.waypoints) > 1:
             self.progress = (self.current_idx + self._segment_progress) / (len(self.waypoints) - 1)
+
+    def _update_heading(self, a, b):
+        """Update heading based on the segment direction."""
+        mlat = 111_320
+        mlon = 111_320 * math.cos(math.radians(a[0]))
+        dx = (b[1] - a[1]) * mlon
+        dy = (b[0] - a[0]) * mlat
+        if abs(dx) > 0.01 or abs(dy) > 0.01:    # avoid NaN on zero-length segments
+            self.heading = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+
+    def distance_to_next_wp(self) -> float:
+        if not self.position or self.current_idx >= len(self.waypoints) - 1:
+            return 0.0
+        b = self.waypoints[self.current_idx + 1]
+        mlat = 111_320
+        mlon = 111_320 * math.cos(math.radians(self.position[0]))
+        return math.sqrt(
+            ((b[0] - self.position[0]) * mlat) ** 2 +
+            ((b[1] - self.position[1]) * mlon) ** 2
+        )
+
+    def eta_s(self) -> float:
+        """Estimated time remaining in seconds (real time, accounting for speed mult)."""
+        remaining_m = self.total_distance - self.distance_traveled
+        if remaining_m <= 0 or self.speed <= 0:
+            return 0.0
+        return remaining_m / self.speed
 
     def snapshot(self) -> dict:
         return {
             "active": self.active,
+            "paused": self.paused,
+            "aborted": self.aborted,
             "mission_id": self.mission_id,
             "drone_type": self.drone_type,
             "lat": round(self.position[0], 7) if self.position else None,
@@ -179,11 +316,17 @@ class TelemetrySimulator:
             "heading": round(self.heading, 1),
             "battery": round(self.battery, 1),
             "groundspeed": round(self.speed, 2),
+            "speed_multiplier": self.speed_multiplier,
             "mode": self.mode,
             "armed": self.armed,
             "progress": round(self.progress, 4),
             "waypoint_index": self.current_idx,
             "waypoint_count": len(self.waypoints),
+            "elapsed_s": round(self.elapsed_s, 1),
+            "eta_s": round(self.eta_s(), 1),
+            "distance_traveled_m": round(self.distance_traveled, 1),
+            "total_distance_m": round(self.total_distance, 1),
+            "distance_to_next_m": round(self.distance_to_next_wp(), 1),
         }
 
 
@@ -352,19 +495,32 @@ async def telemetry_loop():
                 if snap:
                     await ws_manager.broadcast({"type": "telemetry", "data": snap})
 
-            # Simulator runs alongside (only broadcasts when active)
+            # Simulator: tick if active+not paused; broadcast if active OR paused
             was_active = telemetry_sim.active
+            was_aborted = telemetry_sim.aborted
             telemetry_sim.step(dt=0.5)
-            if telemetry_sim.active:
+
+            if telemetry_sim.active or telemetry_sim.paused:
                 snap = telemetry_sim.snapshot()
                 snap["source"] = "simulator"
                 await ws_manager.broadcast({"type": "telemetry", "data": snap})
             elif was_active and not telemetry_sim.active:
-                # Just transitioned to inactive — mission complete
-                if telemetry_sim.mission_id:
+                # Transition to inactive — emit a final inactive snapshot so the
+                # frontend reliably tears down the marker even if it missed it.
+                snap = telemetry_sim.snapshot()
+                snap["source"] = "simulator"
+                await ws_manager.broadcast({"type": "telemetry", "data": snap})
+
+                if telemetry_sim.mission_id and not was_aborted:
                     db.update_mission_status(telemetry_sim.mission_id, "completed")
                     await ws_manager.broadcast({
                         "type": "mission_complete",
+                        "mission_id": telemetry_sim.mission_id,
+                    })
+                elif telemetry_sim.mission_id and was_aborted:
+                    db.update_mission_status(telemetry_sim.mission_id, "aborted")
+                    await ws_manager.broadcast({
+                        "type": "mission_aborted",
                         "mission_id": telemetry_sim.mission_id,
                     })
         except Exception as e:
@@ -601,7 +757,47 @@ async def simulate_mission(mission_id: int):
 @app.post("/api/simulator/stop")
 async def stop_simulator():
     telemetry_sim.stop()
+    # Send a final inactive snapshot so the frontend tears down the HUD/marker
+    snap = telemetry_sim.snapshot()
+    snap["source"] = "simulator"
+    await ws_manager.broadcast({"type": "telemetry", "data": snap})
     return {"status": "stopped"}
+
+
+@app.post("/api/simulator/abort")
+async def abort_simulator():
+    """Emergency abort — stops the sim and marks the mission as aborted."""
+    mid = telemetry_sim.mission_id
+    telemetry_sim.abort()
+    if mid:
+        db.update_mission_status(mid, "aborted")
+    snap = telemetry_sim.snapshot()
+    snap["source"] = "simulator"
+    await ws_manager.broadcast({"type": "telemetry", "data": snap})
+    await ws_manager.broadcast({"type": "mission_aborted", "mission_id": mid})
+    return {"status": "aborted", "mission_id": mid}
+
+
+@app.post("/api/simulator/pause")
+async def pause_simulator():
+    telemetry_sim.pause()
+    return {"status": "paused"}
+
+
+@app.post("/api/simulator/resume")
+async def resume_simulator():
+    telemetry_sim.resume()
+    return {"status": "resumed"}
+
+
+class SpeedRequest(BaseModel):
+    multiplier: float
+
+
+@app.post("/api/simulator/speed")
+async def set_simulator_speed(body: SpeedRequest):
+    telemetry_sim.set_speed_multiplier(body.multiplier)
+    return {"status": "ok", "multiplier": telemetry_sim.speed_multiplier}
 
 
 # ── API: Detections ──
@@ -843,13 +1039,24 @@ async def ws_telemetry(websocket: WebSocket):
 
 @app.post("/api/demo/clear")
 async def clear_demo():
-    """Wipe all data from the database."""
+    """Wipe all data from the database and fully reset the simulator."""
     conn = db.get_db()
     for table in ["treatments", "spray_zones", "detections", "field_health", "missions"]:
         conn.execute(f"DELETE FROM {table}")
     conn.commit()
     conn.close()
-    telemetry_sim.stop()
+
+    # Fully reset the simulator (not just stop) so position/state is gone
+    telemetry_sim.reset()
+
+    # Broadcast a "cleared" event so the frontend tears down all visuals
+    # AND a final inactive telemetry snapshot so any in-flight WS message
+    # can't recreate the marker after the user clicked clear.
+    await ws_manager.broadcast({"type": "data_cleared"})
+    snap = telemetry_sim.snapshot()
+    snap["source"] = "simulator"
+    await ws_manager.broadcast({"type": "telemetry", "data": snap})
+
     return {"status": "cleared"}
 
 

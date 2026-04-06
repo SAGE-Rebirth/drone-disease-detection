@@ -21,10 +21,16 @@
         <!-- ── Header ── -->
         <header class="header">
             <div class="header-brand">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                    <path d="M2 17l10 5 10-5"/>
-                    <path d="M2 12l10 5 10-5"/>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="6" cy="6" r="2.5"/>
+                    <circle cx="18" cy="6" r="2.5"/>
+                    <circle cx="6" cy="18" r="2.5"/>
+                    <circle cx="18" cy="18" r="2.5"/>
+                    <line x1="7.8" y1="7.8" x2="10.5" y2="10.5"/>
+                    <line x1="16.2" y1="7.8" x2="13.5" y2="10.5"/>
+                    <line x1="7.8" y1="16.2" x2="10.5" y2="13.5"/>
+                    <line x1="16.2" y1="16.2" x2="13.5" y2="13.5"/>
+                    <rect x="10" y="10" width="4" height="4" rx="0.5"/>
                 </svg>
                 <h1>Disease Drone</h1>
                 <span>v0.2 PoC</span>
@@ -96,15 +102,15 @@
                 <div class="section-title">Mission Control</div>
                 <div class="mission-controls">
                     <button class="btn btn-primary" onclick="openWizard()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V8a3 3 0 0 1 6 0v3"/><path d="M5 11h14l-1 9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z"/><circle cx="12" cy="16" r="1.2" fill="currentColor"/></svg>
                         New Scan Mission
                     </button>
                     <button class="btn" onclick="toggleDrawMode()" id="drawBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 5 21 5 17 14 7 14 3 5"/><circle cx="3" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="21" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="17" cy="14" r="1.5" fill="currentColor" stroke="none"/><circle cx="7" cy="14" r="1.5" fill="currentColor" stroke="none"/></svg>
                         Quick Draw Area
                     </button>
                     <button class="btn btn-success" onclick="planSpray()" id="planSprayBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c-2.5 4-4 6.5-4 9a4 4 0 0 0 8 0c0-2.5-1.5-5-4-9z" fill="currentColor" stroke="none"/><path d="M3 21h18"/><path d="M5 21l3-4M19 21l-3-4"/></svg>
                         Plan Spray Mission
                     </button>
                 </div>
@@ -172,11 +178,11 @@
             <!-- Demo Controls -->
             <div style="margin-top: auto; display: flex; flex-direction: column; gap: 6px;">
                 <button class="btn" onclick="seedDemoData()" style="width:100%;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
                     Load Demo Data
                 </button>
                 <button class="btn btn-danger" onclick="clearAllData()" style="width:100%;">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
                     Clear All Data
                 </button>
             </div>
@@ -195,6 +201,55 @@
                     <span class="hud-title" id="hudTitle">SCOUT DRONE</span>
                     <span class="hud-mode" id="hudMode">STANDBY</span>
                 </div>
+
+                <!-- Flight controls (live) -->
+                <div class="hud-controls" id="hudLiveControls">
+                    <button class="hud-btn" id="hudPauseBtn" onclick="simPause()" title="Pause">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                    </button>
+                    <button class="hud-btn hud-btn-success" id="hudResumeBtn" onclick="simResume()" style="display:none;" title="Resume">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </button>
+                    <button class="hud-btn hud-btn-warn" onclick="simStop()" title="Stop (graceful)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14"/></svg>
+                    </button>
+                    <button class="hud-btn hud-btn-danger" onclick="simAbort()" title="Abort (emergency)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                    </button>
+                    <div class="hud-speed-group">
+                        <span class="hud-speed-label">SPD</span>
+                        <button class="hud-speed-btn" data-mult="1" onclick="simSpeed(1)">1×</button>
+                        <button class="hud-speed-btn" data-mult="2" onclick="simSpeed(2)">2×</button>
+                        <button class="hud-speed-btn" data-mult="4" onclick="simSpeed(4)">4×</button>
+                        <button class="hud-speed-btn" data-mult="8" onclick="simSpeed(8)">8×</button>
+                    </div>
+                </div>
+
+                <!-- Stopped controls (shown after stop/abort/complete) -->
+                <div class="hud-controls hud-stopped-controls" id="hudStoppedControls" style="display:none;">
+                    <button class="hud-btn hud-btn-success" id="hudRestartBtn" onclick="simRestart()" title="Restart this mission">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/></svg>
+                        Restart
+                    </button>
+                    <button class="hud-btn hud-btn-text" onclick="dismissHud()" title="Hide HUD">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        Dismiss
+                    </button>
+                </div>
+
+                <!-- Preview controls (shown when a mission is selected but not yet running) -->
+                <div class="hud-controls hud-stopped-controls" id="hudPreviewControls" style="display:none;">
+                    <button class="hud-btn hud-btn-success" onclick="startSelectedMission()" title="Start simulating this mission">
+                        <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+                        Start Mission
+                    </button>
+                    <button class="hud-btn hud-btn-text" onclick="dismissHud()" title="Hide HUD">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        Dismiss
+                    </button>
+                </div>
+
+                <!-- Primary flight stats -->
                 <div class="hud-grid">
                     <div class="hud-stat">
                         <div class="hud-label">ALT</div>
@@ -216,6 +271,36 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Mission stats -->
+                <div class="hud-grid hud-grid-3">
+                    <div class="hud-stat">
+                        <div class="hud-label">ELAPSED</div>
+                        <div class="hud-value-sm" id="hudElapsed">0:00</div>
+                    </div>
+                    <div class="hud-stat">
+                        <div class="hud-label">ETA</div>
+                        <div class="hud-value-sm" id="hudEta">--</div>
+                    </div>
+                    <div class="hud-stat">
+                        <div class="hud-label">WPT</div>
+                        <div class="hud-value-sm" id="hudWpt">0/0</div>
+                    </div>
+                </div>
+
+                <!-- Distance + heading compass -->
+                <div class="hud-distance">
+                    <div class="hud-compass">
+                        <div class="hud-compass-ring"></div>
+                        <div class="hud-compass-needle" id="compassNeedle"></div>
+                        <div class="hud-compass-n">N</div>
+                    </div>
+                    <div class="hud-distance-stats">
+                        <div><span class="hud-label">NEXT WP</span> <span id="hudDistNext">--</span> m</div>
+                        <div><span class="hud-label">TRAVELED</span> <span id="hudDistTraveled">0</span> / <span id="hudDistTotal">0</span> m</div>
+                    </div>
+                </div>
+
                 <div class="hud-progress">
                     <div class="hud-progress-label">
                         <span>MISSION PROGRESS</span>
@@ -229,14 +314,17 @@
 
             <!-- Map Toolbar -->
             <div class="map-toolbar" id="mapToolbar">
-                <button class="btn btn-sm" onclick="centerMap()" title="Center on detections">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>
+                <button class="map-btn" onclick="centerMap()" title="Fit map to data">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V5a2 2 0 0 1 2-2h4"/><path d="M21 9V5a2 2 0 0 0-2-2h-4"/><path d="M3 15v4a2 2 0 0 0 2 2h4"/><path d="M21 15v4a2 2 0 0 1-2 2h-4"/></svg>
+                    <span>Fit View</span>
                 </button>
-                <button class="btn btn-sm" onclick="followDrone()" id="followBtn" title="Follow drone">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6"/><path d="M1 12h6m6 0h6"/></svg>
+                <button class="map-btn" onclick="followDrone()" id="followBtn" title="Lock map onto drone">
+                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><polygon points="12 2 19 21 12 17 5 21 12 2"/></svg>
+                    <span>Follow</span>
                 </button>
-                <button class="btn btn-sm" onclick="clearTrail()" title="Clear drone trail">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                <button class="map-btn" onclick="clearTrail()" title="Erase drone breadcrumb trail">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12c2.5-4 5-4 7.5 0s5 4 7.5 0"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
+                    <span>Clear Trail</span>
                 </button>
             </div>
         </main>
@@ -316,7 +404,7 @@
         <div class="modal modal-wizard">
             <div class="modal-header">
                 <h2>New Scan Mission</h2>
-                <button class="modal-close" onclick="closeWizard()">×</button>
+                <button class="modal-close" onclick="closeWizard()" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
             </div>
 
             <div class="wizard-steps">
@@ -332,7 +420,7 @@
                     <p class="wizard-help">Draw the scan area on the map. The drone will fly a lawnmower pattern over this region.</p>
                     <div class="wizard-action">
                         <button class="btn btn-primary" onclick="wizardStartDraw()">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/></svg>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 5 21 5 17 14 7 14 3 5"/><circle cx="3" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="21" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="17" cy="14" r="1.5" fill="currentColor" stroke="none"/><circle cx="7" cy="14" r="1.5" fill="currentColor" stroke="none"/></svg>
                             Draw Area on Map
                         </button>
                     </div>
@@ -373,11 +461,11 @@
                     <p class="wizard-help">Mission ready. Choose how to execute it.</p>
                     <div class="launch-options">
                         <button class="btn btn-primary" onclick="wizardLaunch('simulate')">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
                             Simulate Flight
                         </button>
                         <button class="btn" onclick="wizardLaunch('save')">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/></svg>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                             Save as Plan
                         </button>
                     </div>
@@ -396,18 +484,18 @@
         <div class="modal modal-detail">
             <div class="modal-header">
                 <h2 id="mdTitle">Mission Detail</h2>
-                <button class="modal-close" onclick="closeMissionDetail()">×</button>
+                <button class="modal-close" onclick="closeMissionDetail()" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
             </div>
             <div class="modal-body" id="mdBody">
                 <div class="empty-state"><p>Loading...</p></div>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="exportMissionPlan()" id="mdExportBtn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Export QGC Plan
                 </button>
                 <button class="btn btn-primary" onclick="simulateCurrentMission()" id="mdSimBtn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
                     Simulate Flight
                 </button>
             </div>
@@ -419,7 +507,7 @@
         <div class="modal modal-wizard" style="width: 460px;">
             <div class="modal-header">
                 <h2 id="dcTitle">Connect Drone</h2>
-                <button class="modal-close" onclick="closeDroneConnect()">×</button>
+                <button class="modal-close" onclick="closeDroneConnect()" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
             </div>
             <div class="modal-body">
                 <p class="wizard-help">Enter the MAVLink connection string for the drone or autopilot.</p>

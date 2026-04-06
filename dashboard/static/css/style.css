@@ -331,11 +331,53 @@ body {
     pointer-events: none;
 }
 
-.map-toolbar .btn {
-    background: var(--bg-secondary);
-    border-color: var(--border);
-    box-shadow: var(--shadow);
-    backdrop-filter: blur(8px);
+/* Polished map toolbar buttons with icon + label */
+.map-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: rgba(17, 24, 39, 0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: all var(--transition);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    font-family: inherit;
+}
+
+.map-btn:hover {
+    background: rgba(31, 43, 63, 0.95);
+    border-color: var(--accent);
+    color: var(--text-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 12px var(--accent-glow);
+}
+
+.map-btn:active {
+    transform: scale(0.96);
+}
+
+.map-btn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.map-btn.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4), 0 0 12px var(--accent-glow);
+}
+
+.map-btn.btn-primary svg {
+    color: white;
 }
 
 /* ── Leaflet Draw dark theme ── */
@@ -951,7 +993,8 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 14px;
-    min-width: 280px;
+    min-width: 320px;
+    max-width: 360px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--accent-glow);
     opacity: 0;
     transform: translateY(-12px);
@@ -1084,8 +1127,264 @@ body {
     box-shadow: 0 0 8px var(--accent);
 }
 
+/* ── HUD Flight Controls ── */
+.hud-controls {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+}
+
+.hud-btn {
+    width: 30px;
+    height: 30px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+
+.hud-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.hud-btn:active { transform: scale(0.95); }
+
+.hud-btn svg { width: 14px; height: 14px; }
+
+.hud-btn-success:hover {
+    border-color: var(--success);
+    color: var(--success);
+    box-shadow: 0 0 12px var(--success-bg);
+}
+
+.hud-btn-warn:hover {
+    border-color: var(--warning);
+    color: var(--warning);
+    box-shadow: 0 0 12px var(--warning-bg);
+}
+
+.hud-btn-danger:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+    box-shadow: 0 0 12px var(--danger-bg);
+}
+
+.hud-speed-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px;
+}
+
+.hud-speed-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    padding: 0 4px;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+}
+
+.hud-speed-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+}
+
+.hud-speed-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-card);
+}
+
+.hud-speed-btn.active {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* Stopped state — Restart + Dismiss buttons */
+.hud-stopped-controls {
+    gap: 8px;
+}
+
+.hud-stopped-controls .hud-btn {
+    width: auto;
+    padding: 0 12px;
+    height: 32px;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-family: inherit;
+}
+
+.hud-btn-text {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text-muted);
+}
+
+.hud-btn-text:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+/* HUD mode badge — recolor for stopped/aborted/completed */
+.hud-mode.stopped {
+    background: var(--bg-input);
+    color: var(--text-muted);
+}
+
+.hud-mode.aborted {
+    background: var(--danger-bg);
+    color: var(--danger);
+}
+
+.hud-mode.complete {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+/* ── HUD secondary stats grid (3 columns) ── */
+.hud-grid-3 {
+    grid-template-columns: 1fr 1fr 1fr;
+    margin-top: 10px;
+}
+
+.hud-value-sm {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── HUD Distance + Compass ── */
+.hud-distance {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 10px;
+    padding: 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+.hud-compass {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+}
+
+.hud-compass-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--border);
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--bg-secondary) 30%, var(--bg-input) 100%);
+}
+
+.hud-compass-ring::before,
+.hud-compass-ring::after {
+    content: '';
+    position: absolute;
+    background: var(--text-muted);
+}
+
+/* Cardinal tick marks */
+.hud-compass-ring::before {
+    top: 2px; left: 50%;
+    width: 1px; height: 4px;
+    margin-left: -0.5px;
+}
+
+.hud-compass-needle {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 2px;
+    height: 22px;
+    background: linear-gradient(to top, transparent 50%, var(--accent) 50%);
+    transform-origin: bottom center;
+    transform: translate(-50%, -100%) rotate(0deg);
+    transition: transform 0.4s ease-out;
+    will-change: transform;
+}
+
+.hud-compass-needle::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border: 4px solid transparent;
+    border-bottom-color: var(--accent);
+}
+
+.hud-compass-n {
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    color: var(--accent);
+    font-weight: 700;
+    background: var(--bg-secondary);
+    padding: 0 2px;
+}
+
+.hud-distance-stats {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-distance-stats .hud-label {
+    display: inline;
+    margin-right: 4px;
+}
+
 /* ── Drone marker ── */
+/* Override leaflet's default divIcon styling so only our marker shows */
+.drone-marker-wrapper {
+    background: transparent !important;
+    border: none !important;
+    width: 32px !important;
+    height: 32px !important;
+}
+
 .drone-marker {
+    position: relative;            /* anchor for ::after triangle */
     width: 32px;
     height: 32px;
     background: var(--accent);
@@ -1096,26 +1395,36 @@ body {
     align-items: center;
     justify-content: center;
     color: white;
-    font-size: 18px;
-    transition: transform 0.3s linear;
+    will-change: transform;        /* GPU layer — smoother rotation */
+    transform-origin: center;
+    /* No transition — heading updates arrive every 500ms via WS,
+       any transition causes cumulative jank as new updates interrupt
+       the in-progress animation. */
+}
+
+.drone-marker svg {
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 
 .drone-marker::after {
     content: '';
     position: absolute;
-    top: -10px;
+    top: -12px;                     /* sits above the circle */
     left: 50%;
-    transform: translateX(-50%);
-    border: 8px solid transparent;
-    border-bottom-color: var(--accent);
+    margin-left: -6px;              /* center without using transform */
+    width: 0;
+    height: 0;
+    border: 6px solid transparent;
+    border-bottom-color: white;
+    pointer-events: none;
 }
 
 .drone-marker.treatment {
     background: var(--success);
     box-shadow: 0 0 0 4px var(--success-bg), 0 0 16px var(--success);
 }
-
-.drone-marker.treatment::after { border-bottom-color: var(--success); }
 
 /* ── Modal ── */
 .modal-backdrop {
@@ -1175,9 +1484,7 @@ body {
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: 24px;
     cursor: pointer;
-    line-height: 1;
     width: 32px;
     height: 32px;
     border-radius: 6px;
@@ -1187,9 +1494,15 @@ body {
     transition: all var(--transition);
 }
 
+.modal-close svg {
+    width: 18px;
+    height: 18px;
+}
+
 .modal-close:hover {
-    background: var(--bg-card);
+    background: var(--danger-bg);
     color: var(--danger);
+    transform: rotate(90deg);
 }
 
 .modal-body {
