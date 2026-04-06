@@ -2,7 +2,7 @@
 # 'path' is resolved at runtime by train.py / evaluate.py relative to ml/
 # Use a relative path so the project works on any machine (macOS, Windows, Linux).
 
-path: ../ml/data/processed
+path: ../data/processed
 train: train/images
 val: val/images
 test: test/images
